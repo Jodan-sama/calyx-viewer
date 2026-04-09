@@ -23,10 +23,10 @@ const FINISH_PRESETS: Record<string, FinishPreset> = {
   foil:          { metalness: 1.0,  roughness: 0.0  },
   "multi-chrome": {
     metalness: 1.0,
-    roughness: 0.04,
+    roughness: 0.0,
     iridescence: 1.0,
-    iridescenceIOR: 1.8,
-    iridescenceThicknessRange: [100, 1000],
+    iridescenceIOR: 2.5,
+    iridescenceThicknessRange: [0, 1200],
   },
 };
 
@@ -78,14 +78,14 @@ function RaveLights() {
   return (
     <>
       {/* Magenta key — very close, upper-left */}
-      <pointLight position={[-1.5, 1.5, 2.5]} intensity={300} color="#ff00cc" distance={15} decay={2} />
+      <pointLight position={[-1.5, 1.5, 2.5]} intensity={60} color="#ff00cc" distance={15} decay={2} />
       {/* Cyan fill — right side, close */}
-      <pointLight position={[2, 0, 2.5]} intensity={220} color="#00ffee" distance={15} decay={2} />
+      <pointLight position={[2, 0, 2.5]} intensity={45} color="#00ffee" distance={15} decay={2} />
       {/* Purple rim from behind */}
-      <pointLight position={[0, 0.5, -2.5]} intensity={180} color="#aa00ff" distance={15} decay={2} />
+      <pointLight position={[0, 0.5, -2.5]} intensity={35} color="#aa00ff" distance={15} decay={2} />
       {/* Hot pink top */}
-      <pointLight position={[0, 3, 1.5]} intensity={150} color="#ff44aa" distance={15} decay={2} />
-      {/* Very dim ambient — just enough to not lose the bag in full white bg */}
+      <pointLight position={[0, 3, 1.5]} intensity={30} color="#ff44aa" distance={15} decay={2} />
+      {/* Very dim ambient */}
       <ambientLight intensity={0.05} color="#ffffff" />
     </>
   );
@@ -180,7 +180,7 @@ export default function BagViewer({ textureUrl, onScreenshot, captureRef }: BagV
         gl={{
           antialias: true,
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: isRave ? 1.8 : 1.4,
+          toneMappingExposure: isRave ? 1.1 : 1.4,
           preserveDrawingBuffer: true,
         }}
         shadows
@@ -211,6 +211,7 @@ export default function BagViewer({ textureUrl, onScreenshot, captureRef }: BagV
             iridescence={preset?.iridescence ?? 0}
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
+            finish={finish}
           />
 
           <ContactShadows
