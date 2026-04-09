@@ -1,65 +1,246 @@
+"use client";
+
 import Image from "next/image";
+import dynamic from "next/dynamic";
+import { useState, useCallback, useRef } from "react";
+
+const BagViewer = dynamic(() => import("@/components/BagViewer"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center w-full h-full bg-[#f0f2f7]">
+      <div className="text-center space-y-3">
+        <div className="w-9 h-9 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin mx-auto" />
+        <p className="text-[#272724]/40 text-sm font-light">Loading viewer…</p>
+      </div>
+    </div>
+  ),
+});
+
+const GEMINI_MODEL = "gemini-3.1-flash-image-preview"; // Nano Banana 2
+const GEMINI_PROMPT = "Make a hyper realistic professional product photography shot of this packaging";
 
 export default function Home() {
+  const [textureUrl, setTextureUrl] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
+  const [magicImageUrl, setMagicImageUrl] = useState<string | null>(null);
+  const [isMakingMagic, setIsMakingMagic] = useState(false);
+  const [magicError, setMagicError] = useState<string | null>(null);
+  const captureRef = useRef<(() => void) | null>(null);
+
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_AI_API_KEY ?? "";
+
+  const handleFileUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (textureUrl) URL.revokeObjectURL(textureUrl);
+      setTextureUrl(URL.createObjectURL(file));
+      setFileName(file.name);
+      setMagicImageUrl(null);
+      setMagicError(null);
+    },
+    [textureUrl]
+  );
+
+  const handleUpdate = useCallback(() => {
+    captureRef.current?.();
+  }, []);
+
+  const handleMakeMagic = useCallback(async () => {
+    if (!screenshotUrl || !apiKey) return;
+    setIsMakingMagic(true);
+    setMagicError(null);
+    setMagicImageUrl(null);
+
+    try {
+      // Strip data URL prefix — send raw base64 to the API
+      const [header, base64Data] = screenshotUrl.split(",");
+      const mimeType = header.match(/:(.*?);/)?.[1] ?? "image/png";
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: GEMINI_PROMPT },
+                  { inline_data: { mime_type: mimeType, data: base64Data } },
+                ],
+              },
+            ],
+            generationConfig: {
+              responseModalities: ["IMAGE", "TEXT"],
+            },
+          }),
+        }
+      );
+
+      const data = await res.json();
+      console.log("[Make Magic] API response:", JSON.stringify(data).slice(0, 500));
+
+      if (!res.ok) {
+        throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+      }
+
+      const parts: { text?: string; inlineData?: { mimeType: string; data: string }; inline_data?: { mime_type: string; data: string } }[] =
+        data?.candidates?.[0]?.content?.parts ?? [];
+
+      const imgPart = parts.find((p) => p.inlineData?.data || p.inline_data?.data);
+
+      if (imgPart) {
+        // API returns camelCase inlineData/mimeType
+        const img = imgPart.inlineData ?? imgPart.inline_data!;
+        const mimeOut = (img as { mimeType?: string; mime_type?: string }).mimeType
+          ?? (img as { mimeType?: string; mime_type?: string }).mime_type
+          ?? "image/jpeg";
+        setMagicImageUrl(`data:${mimeOut};base64,${img.data}`);
+      } else {
+        const textPart = parts.find((p) => p.text);
+        throw new Error(textPart?.text ?? "No image in response");
+      }
+    } catch (err: unknown) {
+      setMagicError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setIsMakingMagic(false);
+    }
+  }, [screenshotUrl, apiKey]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="relative w-full h-screen flex flex-col bg-white">
+
+      {/* ── Header ── */}
+      <header className="flex-shrink-0 flex items-center justify-between px-6 h-[58px] bg-white border-b border-[#e8ecf2] z-20">
+        <div className="flex items-center">
+          <Image
+            src="/calyx-logo.svg"
+            alt="Calyx Containers"
+            width={140}
+            height={37}
+            priority
+            style={{ height: 37, width: "auto" }}
+          />
+        </div>
+        <span className="text-[#272724]/40 text-[11px] font-medium tracking-[0.2em] uppercase hidden sm:block select-none">
+          Calyx Preview
+        </span>
+        <div className="w-[140px]" />
+      </header>
+
+      {/* ── Body ── */}
+      <div className="flex flex-1 min-h-0">
+
+        {/* Left panel */}
+        <aside className="flex-shrink-0 w-[200px] bg-white border-r border-[#e8ecf2] flex flex-col items-center pt-5 pb-6 gap-4 z-10 overflow-y-auto">
+
+          {/* Upload */}
+          <label
+            className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
+            style={{ background: "#0033A1" }}
+            onMouseEnter={e => (e.currentTarget.style.background = "#001F60")}
+            onMouseLeave={e => (e.currentTarget.style.background = "#0033A1")}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
+                stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Upload Image
+            <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+          </label>
+
+          {fileName && (
+            <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
+              {fileName.length > 22 ? fileName.slice(0, 20) + "…" : fileName}
+            </p>
+          )}
+
+          <div className="w-[140px] h-px bg-[#e8ecf2]" />
+
+          <p className="text-[9px] font-medium tracking-[0.14em] uppercase text-[#272724]/30 select-none">
+            Label Preview
           </p>
+
+          {/* Preview image with Update overlay */}
+          {screenshotUrl ? (
+            <div
+              className="relative w-[160px] rounded-lg overflow-hidden border border-[#e8ecf2] shadow-sm group cursor-pointer"
+              onClick={handleUpdate}
+              title="Click to update"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={screenshotUrl} alt="Label preview" className="w-full h-auto block" />
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <span className="text-white text-[10px] font-semibold uppercase tracking-[0.18em]">Update</span>
+              </div>
+            </div>
+          ) : (
+            <div className="w-[160px] h-[120px] rounded-lg border border-dashed border-[#d0d8ef] flex items-center justify-center">
+              <p className="text-[9px] text-[#272724]/25 text-center px-3 leading-relaxed select-none">
+                Preview renders<br/>after load…
+              </p>
+            </div>
+          )}
+
+          {/* Make Magic button */}
+          {screenshotUrl && (
+            <button
+              onClick={handleMakeMagic}
+              disabled={isMakingMagic}
+              className="w-[160px] h-7 rounded-full text-[10px] font-semibold uppercase tracking-[0.12em] transition-all active:scale-95 select-none disabled:opacity-50 disabled:cursor-not-allowed text-white"
+              style={{ background: "linear-gradient(135deg, #7c3aed, #db2777)" }}
+            >
+              {isMakingMagic ? "Generating…" : "✦ Make Magic"}
+            </button>
+          )}
+
+          {/* Error */}
+          {magicError && (
+            <p className="text-[9px] text-red-400 text-center px-2 leading-tight break-all">
+              {magicError}
+            </p>
+          )}
+
+          {/* Loading spinner */}
+          {isMakingMagic && (
+            <div className="w-9 h-9 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+          )}
+
+          {/* AI result */}
+          {magicImageUrl && (
+            <>
+              <div className="w-[140px] h-px bg-[#e8ecf2]" />
+              <a
+                href={magicImageUrl}
+                download="calyx-magic.jpg"
+                className="relative w-[160px] rounded-lg overflow-hidden border border-[#e8ecf2] shadow-sm group block cursor-pointer"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={magicImageUrl} alt="AI generated product shot" className="w-full h-auto block" />
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <span className="text-white text-[10px] font-semibold uppercase tracking-[0.18em]">Download</span>
+                </div>
+              </a>
+            </>
+          )}
+        </aside>
+
+        {/* 3D Canvas */}
+        <div className="flex-1 min-w-0 h-full">
+          <BagViewer
+            textureUrl={textureUrl}
+            onScreenshot={setScreenshotUrl}
+            captureRef={captureRef}
+          />
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </div>
+
+      {/* Bottom hint */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">
+        Drag to rotate · Scroll to zoom
+      </div>
     </div>
   );
 }
