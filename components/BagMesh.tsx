@@ -2,6 +2,7 @@
 
 import { useRef, useMemo, useEffect, useState } from "react";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 
@@ -299,11 +300,9 @@ export default function BagMesh({
   // Mark label geo dirty when bag scene changes
   useEffect(() => { decalDirty.current = true; }, [bagScene]);
 
-  // ── Label material with view-space normal fade ────────────────────────────
-  // Uses onBeforeCompile to fade alpha on gusset/side faces using the
-  // view-space normal Z component: front panel (Z≈1) → opaque, gussets (Z≈0) → transparent
+  // ── Label material — simple transparent with polygon offset ─────────────────
   const labelMat = useMemo(() => {
-    const mat = new THREE.MeshStandardMaterial({
+    return new THREE.MeshStandardMaterial({
       metalness: labelMetalness,
       roughness: labelRoughness,
       envMapIntensity: 0.5,
@@ -311,24 +310,9 @@ export default function BagMesh({
       alphaTest: 0.01,
       side: THREE.FrontSide,
       polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
     });
-    mat.onBeforeCompile = (shader) => {
-      // After alphamap_fragment (which sets diffuseColor.a from map),
-      // fade alpha by view-space normal Z before alphatest_fragment
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <alphatest_fragment>',
-        `// Gusset edge fade: triangles whose normals face away from camera
-        // get alpha reduced so only the flat front panel shows the label
-        float vsFacing = max(0.0, normalize(vNormal).z);
-        float edgeFade = smoothstep(0.18, 0.55, vsFacing);
-        diffuseColor.a *= edgeFade;
-        #include <alphatest_fragment>`
-      );
-    };
-    mat.customProgramCacheKey = () => 'label-edge-fade-v1';
-    return mat;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -362,35 +346,65 @@ export default function BagMesh({
     // Ensure world matrices are current for every node in the sub-tree
     groupRef.current.updateMatrixWorld(true);
 
-    // Pick the mesh whose average world-space normal points most toward +Z (front face)
-    let frontMesh: THREE.Mesh | null = null;
-    let bestZ = -Infinity;
+    // ── Collect ALL meshes whose average world-space normal faces forward (+Z) ─
+    // Using a threshold instead of picking just the single best mesh ensures we
+    // capture every mesh object that makes up the front of the bag.
+    const groupInv = new THREE.Matrix4().copy(groupRef.current.matrixWorld).invert();
+    const forwardGeos: THREE.BufferGeometry[] = [];
+    const tmp = new THREE.Vector3();
+
     groupRef.current.traverse((obj) => {
       const m = obj as THREE.Mesh;
-      if (!m.isMesh) return;
+      if (!m.isMesh || !m.geometry.attributes.normal) return;
       const normals = m.geometry.attributes.normal;
-      if (!normals) return;
-      // Sample every 64th normal to keep it fast
       const normalMat = new THREE.Matrix3().getNormalMatrix(m.matrixWorld);
       let sumZ = 0, count = 0;
-      const tmp = new THREE.Vector3();
-      for (let i = 0; i < normals.count; i += 64) {
+      for (let i = 0; i < normals.count; i += 32) {
         tmp.fromBufferAttribute(normals, i).applyMatrix3(normalMat).normalize();
-        sumZ += tmp.z;
-        count++;
+        sumZ += tmp.z; count++;
       }
       const avgZ = sumZ / count;
-      if (avgZ > bestZ) { bestZ = avgZ; frontMesh = m; }
+      if (avgZ <= -0.5) return; // include front + gusset meshes, exclude pure back/bottom
+
+      const cloned = m.geometry.clone();
+      cloned.applyMatrix4(new THREE.Matrix4().multiplyMatrices(groupInv, m.matrixWorld));
+      // Ensure UV attribute exists (needed for mergeGeometries)
+      if (!cloned.attributes.uv) {
+        cloned.setAttribute("uv", new THREE.BufferAttribute(
+          new Float32Array(cloned.attributes.position.count * 2), 2
+        ));
+      }
+      forwardGeos.push(cloned);
     });
-    if (!frontMesh) return;
 
-    // ── Bake the mesh's nested transforms into group-local space ─────────────
-    const groupInv    = new THREE.Matrix4().copy(groupRef.current.matrixWorld).invert();
-    const meshToGroup = new THREE.Matrix4().multiplyMatrices(groupInv, (frontMesh as THREE.Mesh).matrixWorld);
-    const geo = (frontMesh as THREE.Mesh).geometry.clone();
-    geo.applyMatrix4(meshToGroup);
+    if (forwardGeos.length === 0) return;
 
-    // ── Recompute UVs from vertex XY position (correct orientation guaranteed) ─
+    // Merge into a single geometry (handles multiple mesh objects on the front face)
+    const geo = forwardGeos.length === 1
+      ? forwardGeos[0]
+      : (mergeGeometries(forwardGeos, false) ?? forwardGeos[0]);
+
+    // ── Compute vertex normals first so we can identify front-panel vertices ────
+    geo.computeVertexNormals();
+
+    // ── CPU-filter: keep only triangles whose centroid Z > -0.002 ────────────
+    // After baking transforms, group-local Z range is -0.021 (back) to +0.021 (front).
+    // Triangles with centroid Z > -0.002 are front panel + front-half gussets.
+    // This is camera-independent and removes the back panel cleanly.
+    const pos0 = geo.attributes.position as THREE.BufferAttribute;
+    const idx = geo.index;
+    if (idx) {
+      const keep: number[] = [];
+      for (let i = 0; i < idx.count; i += 3) {
+        const ia = idx.getX(i), ib = idx.getX(i+1), ic = idx.getX(i+2);
+        const cz = (pos0.getZ(ia) + pos0.getZ(ib) + pos0.getZ(ic)) / 3;
+        if (cz > 0.0) keep.push(ia, ib, ic);
+      }
+      geo.setIndex(keep);
+    }
+    geo.computeVertexNormals();
+
+    // ── UV from XY position, bounded by front-panel-only vertices ────────────
     const posAttr = geo.attributes.position as THREE.BufferAttribute;
     const uvAttr  = geo.attributes.uv as THREE.BufferAttribute;
     let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
@@ -408,30 +422,6 @@ export default function BagMesh({
       );
     }
     uvAttr.needsUpdate = true;
-
-    // ── Remove definitively back-facing triangles (cross product nz ≤ 0) ──────
-    // Gusset/side triangles are NOT filtered here — the label material's
-    // onBeforeCompile shader fades them via view-space normal Z smoothstep.
-    // This keeps full front-panel coverage (no chrome gaps at edges) while
-    // the shader handles the natural gusset fade.
-    const idx = geo.index;
-    if (idx) {
-      const pos = geo.attributes.position as THREE.BufferAttribute;
-      const keep: number[] = [];
-      for (let i = 0; i < idx.count; i += 3) {
-        const ia = idx.getX(i), ib = idx.getX(i + 1), ic = idx.getX(i + 2);
-        const ax=pos.getX(ia),ay=pos.getY(ia);
-        const bx=pos.getX(ib),by=pos.getY(ib);
-        const cx=pos.getX(ic),cy=pos.getY(ic);
-        // nz > 0 → winding faces toward +Z (camera direction), keep it
-        const nz = (bx-ax)*(cy-ay) - (by-ay)*(cx-ax);
-        if (nz > 0) keep.push(ia, ib, ic);
-      }
-      geo.setIndex(keep);
-    }
-    // computeVertexNormals so per-vertex normals are correct in view space
-    // (used by the edge-fade shader to determine facing angle)
-    geo.computeVertexNormals();
 
     setFrontLabelGeo(geo);
   });
