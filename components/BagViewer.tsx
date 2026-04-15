@@ -160,21 +160,25 @@ function SmokeBackLight() {
   );
 }
 
+// Satin-reflective floor used in the Smoke scene. Roughness ≈ 0.4 + metalness
+// 0.6 mirrors the Satin finish preset: a soft, diffused reflection rather than
+// a mirror-polished one. mixStrength is bumped so the bag actually reads in the
+// reflection; the lighter blur keeps that reflection recognisable.
 function ReflectiveFloor() {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.3, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
-        blur={[300, 80]}
+        blur={[180, 40]}
         resolution={1024}
-        mixBlur={1.2}
-        mixStrength={1.2}
-        roughness={0.8}
-        depthScale={0.5}
+        mixBlur={1.5}
+        mixStrength={3.0}
+        roughness={0.4}
+        depthScale={0.6}
         minDepthThreshold={0.4}
         maxDepthThreshold={1.4}
-        color="#dfe3ec"
-        metalness={0.25}
+        color="#e4e8f0"
+        metalness={0.6}
         mirror={0}
       />
     </mesh>
@@ -244,7 +248,7 @@ export default function BagViewer({
       environment: {
         label: "Scene",
         value: "default",
-        options: { Default: "default", Smoke: "smoke" },
+        options: { Default: "default", Smoke: "smoke", Dim: "dim" },
       },
     }, { collapsed: false }),
   });
@@ -259,6 +263,13 @@ export default function BagViewer({
 
   const isRave = lighting === "rave";
   const isSmoke = environment === "smoke";
+  const isDim = environment === "dim";
+
+  // Dim mode pulls every light source — ambient, HDRI-driven scene lighting,
+  // and the bag material's env-map reflections — down to 50%. Rave already
+  // has its own explicit intensity for the HDRI, so we don't stack dimming
+  // on top of it.
+  const dimScale = isDim ? 0.5 : 1;
 
   // Keep the studio-light background regardless of environment. The smoke
   // scene relies on a backlight behind the clouds to create contrast rather
@@ -302,7 +313,7 @@ export default function BagViewer({
       style={{ width: "100%", height: "100%" }}
     >
       <color attach="background" args={[backgroundColor]} />
-      {!isRave && <ambientLight intensity={0.45} />}
+      {!isRave && <ambientLight intensity={0.45 * dimScale} />}
 
       <Suspense fallback={null}>
         {isRave ? (
@@ -312,7 +323,10 @@ export default function BagViewer({
             <Environment preset="studio" background={false} environmentIntensity={0.22} />
           </>
         ) : (
-          <Environment preset={lighting as "studio"} />
+          <Environment
+            preset={lighting as "studio"}
+            environmentIntensity={dimScale}
+          />
         )}
 
         {isSmoke && (
@@ -334,6 +348,7 @@ export default function BagViewer({
           iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
           iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
           finish={finish}
+          envIntensityScale={dimScale}
         />
 
         {isSmoke ? (

@@ -20,7 +20,17 @@ interface BagMeshProps {
   iridescenceIOR?: number;
   iridescenceThicknessRange?: [number, number];
   finish?: string;
+  /** Multiplier applied to every material's envMapIntensity — lets the
+   *  caller dim the HDRI reflections on the bag without touching the
+   *  scene's <Environment>. 1.0 = default, 0.5 = half-strength, etc. */
+  envIntensityScale?: number;
 }
+
+// Base env-map intensities per material — the scale prop multiplies into these.
+const MYLAR_ENV_BASE = 2.0;
+const LABEL_ENV_BASE = 0.5;
+const FOIL_ENV_BASE = 0.6;
+const CHROME_ENV_BASE = 0.25;
 
 function hsvToRgb(h: number): [number, number, number] {
   const i = Math.floor(h * 6);
@@ -225,6 +235,7 @@ export default function BagMesh({
   iridescenceIOR = 1.5,
   iridescenceThicknessRange = [100, 800],
   finish = "",
+  envIntensityScale = 1,
 }: BagMeshProps) {
   // ── Refs ───────────────────────────────────────────────────────────────────
   const groupRef = useRef<THREE.Group>(null);
@@ -238,7 +249,7 @@ export default function BagMesh({
   // ── Holographic Foil shader ────────────────────────────────────────────────
   const holographicFoilMat = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
-      metalness: 1.0, roughness: 0.0, envMapIntensity: 0.6, side: THREE.DoubleSide,
+      metalness: 1.0, roughness: 0.0, envMapIntensity: FOIL_ENV_BASE, side: THREE.DoubleSide,
     });
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
@@ -275,7 +286,7 @@ export default function BagMesh({
   // ── Multi-chrome shader ────────────────────────────────────────────────────
   const multiChromeMat = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
-      metalness: 1.0, roughness: 0.0, envMapIntensity: 0.25, side: THREE.DoubleSide,
+      metalness: 1.0, roughness: 0.0, envMapIntensity: CHROME_ENV_BASE, side: THREE.DoubleSide,
     });
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
@@ -363,7 +374,7 @@ export default function BagMesh({
 
   const mylarMat = useMemo(() => new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(color), metalness, roughness,
-    envMapIntensity: 2.0, side: THREE.DoubleSide,
+    envMapIntensity: MYLAR_ENV_BASE, side: THREE.DoubleSide,
     iridescence, iridescenceIOR, iridescenceThicknessRange,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
@@ -372,6 +383,7 @@ export default function BagMesh({
     mylarMat.color.set(color);
     mylarMat.metalness = metalness;
     mylarMat.roughness = roughness;
+    mylarMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale;
     mylarMat.iridescence = iridescence;
     mylarMat.iridescenceIOR = iridescenceIOR;
     mylarMat.iridescenceThicknessRange = iridescenceThicknessRange;
@@ -386,7 +398,15 @@ export default function BagMesh({
       mylarMat.color.set(color);
     }
     mylarMat.needsUpdate = true;
-  }, [color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, mylarMat, holographicTex]);
+  }, [color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, mylarMat, holographicTex]);
+
+  // Keep the foil + multi-chrome shaders in sync with the env scale too.
+  useEffect(() => {
+    holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
+    holographicFoilMat.needsUpdate = true;
+    multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
+    multiChromeMat.needsUpdate = true;
+  }, [envIntensityScale, holographicFoilMat, multiChromeMat]);
 
   useEffect(() => {
     bagScene.traverse((obj) => {
@@ -410,7 +430,7 @@ export default function BagMesh({
     new THREE.MeshStandardMaterial({
       metalness: labelMetalness,
       roughness: labelRoughness,
-      envMapIntensity: 0.5,
+      envMapIntensity: LABEL_ENV_BASE,
       transparent: true,
       alphaTest: 0.01,
       side: THREE.FrontSide,
@@ -428,15 +448,17 @@ export default function BagMesh({
     frontLabelMat.map = frontLabelTex;
     frontLabelMat.metalness = labelMetalness;
     frontLabelMat.roughness = labelRoughness;
+    frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
     frontLabelMat.needsUpdate = true;
-  }, [frontLabelTex, labelMetalness, labelRoughness, frontLabelMat]);
+  }, [frontLabelTex, labelMetalness, labelRoughness, envIntensityScale, frontLabelMat]);
 
   useEffect(() => {
     backLabelMat.map = backLabelTex;
     backLabelMat.metalness = labelMetalness;
     backLabelMat.roughness = labelRoughness;
+    backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
     backLabelMat.needsUpdate = true;
-  }, [backLabelTex, labelMetalness, labelRoughness, backLabelMat]);
+  }, [backLabelTex, labelMetalness, labelRoughness, envIntensityScale, backLabelMat]);
 
   // ── Label geometries (front + back, regenerated on decalDirty) ─────────────
   const [frontLabelGeo, setFrontLabelGeo] = useState<THREE.BufferGeometry | null>(null);
