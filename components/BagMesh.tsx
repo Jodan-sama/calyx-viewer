@@ -68,11 +68,17 @@ function buildHolographicTexture(): THREE.CanvasTexture {
 useGLTF.preload("/mylar_bag.glb");
 
 // ── Label geometry extractor ─────────────────────────────────────────────────
-// Collects mesh triangles that make up a given side of the bag (front/back),
-// remaps their UVs to cover the panel from XY position, and returns a single
-// merged BufferGeometry ready to be rendered as a decal mesh on top of the bag.
-// Back-side UVs are mirrored on X so uploaded artwork reads correctly when
-// viewed from behind.
+// Collects every mesh triangle under the bag root, normalises vertex
+// attributes so they can be merged, then filters at the triangle level by
+// centroid-Z to split the merged geometry into front/back panels. Back UVs
+// are mirrored on X so uploaded artwork reads correctly from behind.
+//
+// NOTE: we intentionally do NOT pre-filter at the mesh level. An earlier
+// version sampled each mesh's average normal and dropped meshes whose avg
+// pointed opposite to the side being built — but that heuristic cut out
+// the right half of the back panel in the GLB, because the sampled normals
+// of that chunk skewed front-ish. Triangle-level centroid-Z is the
+// authoritative classifier, so we let every mesh in and filter per-triangle.
 function buildLabelGeo(
   rootGroup: THREE.Group,
   side: "front" | "back"
@@ -81,54 +87,47 @@ function buildLabelGeo(
     .copy(rootGroup.matrixWorld)
     .invert();
   const collected: THREE.BufferGeometry[] = [];
-  const tmpN = new THREE.Vector3();
 
   rootGroup.traverse((obj) => {
     const m = obj as THREE.Mesh;
-    if (!m.isMesh || !m.geometry.attributes.normal) return;
+    if (!m.isMesh || !m.geometry?.attributes?.position) return;
 
-    // Average world-space Z normal — lets us skip meshes whose face points
-    // hard away from the side we're capturing.
-    const normals = m.geometry.attributes.normal;
-    const normalMat = new THREE.Matrix3().getNormalMatrix(m.matrixWorld);
-    let sumZ = 0,
-      count = 0;
-    for (let i = 0; i < normals.count; i += 32) {
-      tmpN
-        .fromBufferAttribute(normals, i)
-        .applyMatrix3(normalMat)
-        .normalize();
-      sumZ += tmpN.z;
-      count++;
+    // Build a fresh geometry holding ONLY position/normal/uv so the
+    // subsequent mergeGeometries() call never fails on attribute mismatch
+    // (the GLB has meshes with varying secondary UV sets and tangents).
+    const src = m.geometry;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", src.attributes.position.clone());
+    if (src.attributes.normal) {
+      g.setAttribute("normal", src.attributes.normal.clone());
     }
-    const avgZ = sumZ / count;
-    // Front pass: skip meshes strongly facing -Z (back panel).
-    // Back pass:  skip meshes strongly facing +Z (front panel).
-    if (side === "front" && avgZ <= -0.5) return;
-    if (side === "back" && avgZ >= 0.5) return;
-
-    const cloned = m.geometry.clone();
-    cloned.applyMatrix4(
-      new THREE.Matrix4().multiplyMatrices(groupInv, m.matrixWorld)
-    );
-    if (!cloned.attributes.uv) {
-      cloned.setAttribute(
+    if (src.attributes.uv) {
+      g.setAttribute("uv", src.attributes.uv.clone());
+    } else {
+      g.setAttribute(
         "uv",
         new THREE.BufferAttribute(
-          new Float32Array(cloned.attributes.position.count * 2),
+          new Float32Array(src.attributes.position.count * 2),
           2
         )
       );
     }
-    collected.push(cloned);
+    if (src.index) g.setIndex(src.index.clone());
+
+    g.applyMatrix4(
+      new THREE.Matrix4().multiplyMatrices(groupInv, m.matrixWorld)
+    );
+    collected.push(g);
   });
 
   if (collected.length === 0) return null;
 
-  const geo =
+  const merged =
     collected.length === 1
       ? collected[0]
-      : mergeGeometries(collected, false) ?? collected[0];
+      : mergeGeometries(collected, false);
+  if (!merged) return null;
+  const geo = merged;
 
   geo.computeVertexNormals();
 

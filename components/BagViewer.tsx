@@ -84,8 +84,9 @@ function RaveLights() {
 }
 
 // ── Smoke + reflective floor scene ────────────────────────────────────────────
-// Slowly-drifting dark "smoke" clouds behind the bag plus a dark, mildly
-// reflective floor. Swapped in when the user picks Environment → Smoke.
+// Slowly-drifting white smoke clouds behind the bag, lit from behind so the
+// volume reads against the light background, plus a light, mildly reflective
+// floor. Swapped in when the user picks Environment → Smoke.
 function SmokeBackground() {
   const cloudsRef = useRef<THREE.Group>(null);
   useFrame((_, delta) => {
@@ -100,8 +101,8 @@ function SmokeBackground() {
           segments={40}
           bounds={[5, 1.2, 2]}
           volume={3}
-          color="#2a2f40"
-          opacity={0.45}
+          color="#ffffff"
+          opacity={0.55}
           fade={40}
           position={[-1.6, 0.2, 0]}
         />
@@ -109,8 +110,8 @@ function SmokeBackground() {
           segments={30}
           bounds={[4, 1.0, 2]}
           volume={2.4}
-          color="#3a3f54"
-          opacity={0.4}
+          color="#f4f6fb"
+          opacity={0.5}
           fade={40}
           position={[1.8, 0.6, -0.4]}
         />
@@ -118,13 +119,44 @@ function SmokeBackground() {
           segments={28}
           bounds={[3, 0.9, 1.8]}
           volume={2.0}
-          color="#1f2230"
-          opacity={0.5}
+          color="#dde2ec"
+          opacity={0.65}
           fade={40}
           position={[0, -0.6, 0.3]}
         />
       </Clouds>
     </group>
+  );
+}
+
+// Backlight for the smoke scene — a soft white light placed behind the smoke
+// volume so the white clouds catch highlights and read as form instead of
+// flat fog against the light background.
+function SmokeBackLight() {
+  return (
+    <>
+      <pointLight
+        position={[0, 0.8, -3.2]}
+        intensity={28}
+        color="#ffffff"
+        distance={10}
+        decay={2}
+      />
+      <pointLight
+        position={[-1.6, 0.4, -2.6]}
+        intensity={14}
+        color="#e8ecf8"
+        distance={8}
+        decay={2}
+      />
+      <pointLight
+        position={[1.6, 0.4, -2.6]}
+        intensity={14}
+        color="#f3ecf8"
+        distance={8}
+        decay={2}
+      />
+    </>
   );
 }
 
@@ -136,13 +168,13 @@ function ReflectiveFloor() {
         blur={[300, 80]}
         resolution={1024}
         mixBlur={1.2}
-        mixStrength={1.5}
-        roughness={0.75}
-        depthScale={0.6}
+        mixStrength={1.2}
+        roughness={0.8}
+        depthScale={0.5}
         minDepthThreshold={0.4}
         maxDepthThreshold={1.4}
-        color="#0f1218"
-        metalness={0.35}
+        color="#dfe3ec"
+        metalness={0.25}
         mirror={0}
       />
     </mesh>
@@ -228,12 +260,10 @@ export default function BagViewer({
   const isRave = lighting === "rave";
   const isSmoke = environment === "smoke";
 
-  // Background colour depends on the chosen environment. Smoke gets a near-black
-  // so the dark clouds and dim reflective floor can read.
-  const backgroundColor = useMemo(() => {
-    if (isSmoke) return "#0a0c12";
-    return "#eef1f8";
-  }, [isSmoke]);
+  // Keep the studio-light background regardless of environment. The smoke
+  // scene relies on a backlight behind the clouds to create contrast rather
+  // than a dark sky.
+  const backgroundColor = useMemo(() => "#eef1f8", []);
 
   // Emit the current material snapshot whenever any Leva control changes
   useEffect(() => {
@@ -264,7 +294,7 @@ export default function BagViewer({
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: isRave ? 1.1 : isSmoke ? 1.2 : 1.4,
+        toneMappingExposure: isRave ? 1.1 : 1.4,
         preserveDrawingBuffer: true,
       }}
       shadows
@@ -272,7 +302,7 @@ export default function BagViewer({
       style={{ width: "100%", height: "100%" }}
     >
       <color attach="background" args={[backgroundColor]} />
-      {!isRave && <ambientLight intensity={isSmoke ? 0.25 : 0.45} />}
+      {!isRave && <ambientLight intensity={0.45} />}
 
       <Suspense fallback={null}>
         {isRave ? (
@@ -285,7 +315,12 @@ export default function BagViewer({
           <Environment preset={lighting as "studio"} />
         )}
 
-        {isSmoke && <SmokeBackground />}
+        {isSmoke && (
+          <>
+            <SmokeBackLight />
+            <SmokeBackground />
+          </>
+        )}
 
         <BagMesh
           textureUrl={textureUrl}
