@@ -4,6 +4,10 @@ export type Brand = {
   id: string;
   name: string;
   slug: string;
+  /** Page background for this brand's Outreach + /client/[slug]. Null = default. */
+  primary_color: string | null;
+  /** Accent color (buttons, outlines, links) for this brand. Null = Calyx blue. */
+  secondary_color: string | null;
   created_at: string;
 };
 

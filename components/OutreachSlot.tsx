@@ -48,6 +48,7 @@ export function ProductSlot({
           <OutreachBagViewer
             textureUrl={set.label_image_url}
             material={set.material}
+            autoRotate
           />
         )}
         {isFlat && (

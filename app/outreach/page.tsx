@@ -2,10 +2,20 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { listBrands, listSetsForBrand } from "@/lib/brands";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  listBrands,
+  listSetsForBrand,
+  updateBrandColors,
+} from "@/lib/brands";
 import { supabaseConfigured } from "@/lib/supabase";
 import type { Brand, ProductSet } from "@/lib/types";
+import {
+  brandThemeVars,
+  DEFAULT_PRIMARY,
+  DEFAULT_SECONDARY,
+  resolveBrandColors,
+} from "@/lib/brandTheme";
 import ImagePreviewModal from "@/components/ImagePreviewModal";
 import { ProductSlot, GallerySlot } from "@/components/OutreachSlot";
 
@@ -22,7 +32,7 @@ export default function Outreach() {
   const [err, setErr] = useState<string | null>(
     supabaseConfigured
       ? null
-      : "Supabase not configured. Add NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local."
+      : "Supabase not configured. Add NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY to your environment."
   );
   const [clientSiteOpen, setClientSiteOpen] = useState(false);
   const [clientVersion, setClientVersion] = useState(0);
@@ -90,6 +100,39 @@ export default function Outreach() {
     [brands, selectedBrandId]
   );
 
+  // ── Brand theme (primary/secondary) ────────────────────────────────────────
+  const colors = resolveBrandColors(selectedBrand);
+  const themeVars = brandThemeVars(colors);
+
+  // Debounced color save — optimistic UI update happens in handleColorChange
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
+
+  const handleColorChange = useCallback(
+    (field: "primary_color" | "secondary_color", value: string) => {
+      if (!selectedBrand) return;
+      const brandId = selectedBrand.id;
+
+      // Optimistic: patch the brand in local state so the UI previews
+      // the color instantly without waiting for the round-trip.
+      setBrands((prev) =>
+        prev.map((b) => (b.id === brandId ? { ...b, [field]: value } : b))
+      );
+
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        updateBrandColors(brandId, { [field]: value }).catch((e) => {
+          setErr(e instanceof Error ? e.message : "Color save failed");
+        });
+      }, 400);
+    },
+    [selectedBrand]
+  );
+
   const clientOrigin =
     typeof window !== "undefined" ? window.location.origin : "";
   const clientUrl = selectedBrand
@@ -124,16 +167,20 @@ export default function Outreach() {
   }, [clientUrl]);
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-white flex flex-col">
+    <div
+      className="relative w-full h-screen overflow-hidden flex flex-col"
+      style={{ ...themeVars, background: "var(--brand-primary)" }}
+    >
       {/* Header */}
-      <header className="flex-shrink-0 flex items-center justify-between px-8 h-[64px] border-b border-[#e8ecf2]">
+      <header className="flex-shrink-0 flex items-center justify-between px-8 h-[64px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
         <Link href="/" className="flex items-center gap-3 group">
           <svg
             width="14"
             height="14"
             viewBox="0 0 14 14"
             fill="none"
-            className="text-[#272724]/50 group-hover:text-[#0033A1] transition-colors"
+            className="text-[#272724]/50 transition-colors"
+            style={{ color: "var(--brand-secondary)" }}
           >
             <path
               d="M9 2L4 7l5 5"
@@ -161,7 +208,7 @@ export default function Outreach() {
       {/* Body */}
       <main className="flex-1 min-h-0 overflow-y-auto px-8 py-10">
         <div className="max-w-[1100px] mx-auto">
-          {/* Brand selector + Client-site generator */}
+          {/* Brand selector + theme pickers + client-site generator */}
           <div className="mb-10 flex items-end justify-between flex-wrap gap-6">
             <div>
               <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-2">
@@ -174,7 +221,8 @@ export default function Outreach() {
                   No brands yet — save one from{" "}
                   <Link
                     href="/calyx-preview"
-                    className="text-[#0033A1] hover:underline"
+                    className="hover:underline"
+                    style={{ color: "var(--brand-secondary)" }}
                   >
                     Calyx Preview
                   </Link>
@@ -184,7 +232,8 @@ export default function Outreach() {
                 <select
                   value={selectedBrandId}
                   onChange={(e) => handleBrandChange(e.target.value)}
-                  className="h-10 pl-3 pr-8 rounded-lg border border-[#e8ecf2] text-[13px] bg-white focus:outline-none focus:border-[#0033A1] min-w-[220px]"
+                  className="h-10 pl-3 pr-8 rounded-lg border border-[#e8ecf2] text-[13px] bg-white focus:outline-none min-w-[220px]"
+                  style={{ outlineColor: "var(--brand-secondary)" }}
                 >
                   {brands.map((b) => (
                     <option key={b.id} value={b.id}>
@@ -195,6 +244,22 @@ export default function Outreach() {
               )}
             </div>
 
+            {/* Theme pickers */}
+            {selectedBrand && (
+              <div className="flex items-end gap-5">
+                <ColorPickerField
+                  label="Primary"
+                  value={selectedBrand.primary_color || DEFAULT_PRIMARY}
+                  onChange={(v) => handleColorChange("primary_color", v)}
+                />
+                <ColorPickerField
+                  label="Secondary"
+                  value={selectedBrand.secondary_color || DEFAULT_SECONDARY}
+                  onChange={(v) => handleColorChange("secondary_color", v)}
+                />
+              </div>
+            )}
+
             {/* Client site */}
             {selectedBrand && (
               <div className="flex flex-col items-end gap-2">
@@ -204,15 +269,16 @@ export default function Outreach() {
                       href={clientUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="font-mono text-[#0033A1] hover:text-[#001F60] underline underline-offset-4 decoration-dotted max-w-[420px] truncate"
+                      className="font-mono underline underline-offset-4 decoration-dotted max-w-[420px] truncate"
                       title={clientUrl}
+                      style={{ color: "var(--brand-secondary)" }}
                     >
                       {clientUrl}
                     </a>
                     <button
                       type="button"
                       onClick={handleCopyUrl}
-                      className="text-[10px] font-semibold tracking-[0.14em] uppercase text-[#272724]/55 hover:text-[#0033A1] transition"
+                      className="text-[10px] font-semibold tracking-[0.14em] uppercase text-[#272724]/55 transition hover:[color:var(--brand-secondary)]"
                     >
                       {copied ? "Copied!" : "Copy"}
                     </button>
@@ -221,7 +287,8 @@ export default function Outreach() {
                 <button
                   type="button"
                   onClick={handleGenerateOrUpdate}
-                  className="h-10 px-5 rounded-full text-[11px] font-semibold tracking-[0.14em] uppercase text-white bg-[#0033A1] hover:bg-[#001F60] transition-all active:scale-95"
+                  className="h-10 px-5 rounded-full text-[11px] font-semibold tracking-[0.14em] uppercase text-white transition-all active:scale-95 hover:brightness-90"
+                  style={{ backgroundColor: "var(--brand-secondary)" }}
                 >
                   {clientSiteOpen ? "Update Client URL" : "Generate Client Site"}
                 </button>
@@ -284,5 +351,37 @@ export default function Outreach() {
         />
       )}
     </div>
+  );
+}
+
+/* ───────── Compact color-picker field ───────── */
+function ColorPickerField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-2 select-none">
+      <span className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35">
+        {label}
+      </span>
+      <span className="flex items-center gap-2 h-10 pl-2 pr-3 rounded-lg border border-[#e8ecf2] bg-white">
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-7 h-7 rounded-md border border-[#e8ecf2] bg-transparent cursor-pointer appearance-none"
+          style={{ padding: 0 }}
+          aria-label={`${label} color`}
+        />
+        <span className="font-mono text-[11px] text-[#272724]/70 tracking-tight">
+          {value.toUpperCase()}
+        </span>
+      </span>
+    </label>
   );
 }

@@ -29,6 +29,21 @@ export async function listBrands(): Promise<Brand[]> {
   return data ?? [];
 }
 
+/** Patch brand theme colors. Either field may be null to clear it. */
+export async function updateBrandColors(
+  brandId: string,
+  patch: { primary_color?: string | null; secondary_color?: string | null }
+): Promise<Brand> {
+  const { data, error } = await getSupabase()
+    .from("brands")
+    .update(patch)
+    .eq("id", brandId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Brand;
+}
+
 export async function getOrCreateBrand(name: string): Promise<Brand> {
   const slug = slugify(name);
   const supabase = getSupabase();

@@ -6,6 +6,7 @@ import { use } from "react";
 import { getBrandBySlug, listSetsForBrand } from "@/lib/brands";
 import { supabaseConfigured } from "@/lib/supabase";
 import type { Brand, ProductSet } from "@/lib/types";
+import { brandThemeVars, resolveBrandColors } from "@/lib/brandTheme";
 import { ProductSlot, GallerySlot } from "@/components/OutreachSlot";
 import ImagePreviewModal from "@/components/ImagePreviewModal";
 
@@ -65,10 +66,17 @@ export default function ClientSite({
     return map;
   }, [sets]);
 
+  // Brand-scoped theme (primary = page bg, secondary = accents)
+  const colors = resolveBrandColors(brand);
+  const themeVars = brandThemeVars(colors);
+
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-white flex flex-col">
+    <div
+      className="relative w-full h-screen overflow-hidden flex flex-col"
+      style={{ ...themeVars, background: "var(--brand-primary)" }}
+    >
       {/* Centered logo header, no admin chrome */}
-      <header className="flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2]">
+      <header className="flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
         <Image
           src="/calyx-logo.svg"
           alt="Calyx Containers"
@@ -84,7 +92,10 @@ export default function ClientSite({
         <div className="max-w-[1100px] mx-auto">
           {loading ? (
             <div className="flex items-center justify-center py-20">
-              <div className="w-8 h-8 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin" />
+              <div
+                className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+                style={{ borderColor: "var(--brand-secondary)", borderTopColor: "transparent" }}
+              />
             </div>
           ) : err ? (
             <p className="text-[12px] text-red-500 bg-red-50 rounded-lg p-4">
