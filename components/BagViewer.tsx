@@ -192,18 +192,18 @@ function AluminumShell() {
       <sphereGeometry args={[14, 48, 32]} />
       <meshStandardMaterial
         color="#b8bcc3"
-        metalness={0.9}
-        roughness={0.35}
+        metalness={0.7}
+        roughness={0.1}
         side={THREE.BackSide}
       />
     </mesh>
   );
 }
 
-// Satin-reflective floor used in the Smoke scene. Roughness ≈ 0.4 + metalness
-// 0.6 mirrors the Satin finish preset: a soft, diffused reflection rather than
-// a mirror-polished one. mixStrength is bumped so the bag actually reads in the
-// reflection; the lighter blur keeps that reflection recognisable.
+// Mirror-polished floor used in the Smoke scene. Roughness 0.05 + metalness
+// 0.9 with mirror=1 and only light blur gives a crisp, full-strength cast
+// reflection of the bag — closer to wet glass than satin. mixStrength is
+// pushed high so the reflection reads clearly against the light floor tint.
 //
 // Y position sits right at the bag's bottom so the package appears to stand on
 // the plane — tight placement is what gives the base of the bag a clean cast
@@ -213,17 +213,17 @@ function ReflectiveFloor() {
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
-        blur={[180, 40]}
-        resolution={1024}
-        mixBlur={1.5}
-        mixStrength={3.0}
-        roughness={0.4}
-        depthScale={0.6}
-        minDepthThreshold={0.4}
+        blur={[30, 10]}
+        resolution={2048}
+        mixBlur={0.2}
+        mixStrength={8.0}
+        roughness={0.05}
+        depthScale={0.8}
+        minDepthThreshold={0.2}
         maxDepthThreshold={1.4}
-        color="#e4e8f0"
-        metalness={0.6}
-        mirror={0}
+        color="#eef1f8"
+        metalness={0.9}
+        mirror={1}
       />
     </mesh>
   );
