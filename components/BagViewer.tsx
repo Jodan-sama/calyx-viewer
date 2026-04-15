@@ -6,29 +6,12 @@ import { OrbitControls, Environment, ContactShadows } from "@react-three/drei";
 import { useControls, folder, Leva } from "leva";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
-
-interface FinishPreset {
-  metalness: number;
-  roughness: number;
-  iridescence?: number;
-  iridescenceIOR?: number;
-  iridescenceThicknessRange?: [number, number];
-}
-
-const FINISH_PRESETS: Record<string, FinishPreset> = {
-  metallic:      { metalness: 0.92, roughness: 0.08 },
-  matte:         { metalness: 0.0,  roughness: 0.88 },
-  gloss:         { metalness: 0.15, roughness: 0.04 },
-  satin:         { metalness: 0.35, roughness: 0.42 },
-  foil:          { metalness: 1.0,  roughness: 0.0  },
-  "multi-chrome": {
-    metalness: 1.0,
-    roughness: 0.0,
-    iridescence: 1.0,
-    iridescenceIOR: 2.5,
-    iridescenceThicknessRange: [0, 1200],
-  },
-};
+import {
+  FINISH_PRESETS,
+  type BagFinish,
+  type BagLighting,
+  type BagMaterial,
+} from "@/lib/bagMaterial";
 
 // ── Screenshot helper — auto-captures on load + exposes manual trigger ────────
 function ScreenshotCapture({
@@ -95,9 +78,15 @@ interface BagViewerProps {
   textureUrl: string | null;
   onScreenshot?: (url: string) => void;
   captureRef?: React.MutableRefObject<(() => void) | null>;
+  onMaterialChange?: (material: BagMaterial) => void;
 }
 
-export default function BagViewer({ textureUrl, onScreenshot, captureRef }: BagViewerProps) {
+export default function BagViewer({
+  textureUrl,
+  onScreenshot,
+  captureRef,
+  onMaterialChange,
+}: BagViewerProps) {
   const {
     finish, metalness, roughness, bagColor,
     autoRotate, lighting,
@@ -142,12 +131,38 @@ export default function BagViewer({ textureUrl, onScreenshot, captureRef }: BagV
     }, { collapsed: true }),
   });
 
-  const preset = finish === "custom" ? null : (FINISH_PRESETS[finish] ?? FINISH_PRESETS.metallic);
+  const preset =
+    finish === "custom"
+      ? null
+      : FINISH_PRESETS[finish as Exclude<BagFinish, "custom">] ?? FINISH_PRESETS.metallic;
   const bagProps = preset
     ? { metalness: preset.metalness, roughness: preset.roughness }
     : { metalness, roughness };
 
   const isRave = lighting === "rave";
+
+  // Emit the current material snapshot whenever any Leva control changes
+  useEffect(() => {
+    if (!onMaterialChange) return;
+    onMaterialChange({
+      finish: finish as BagFinish,
+      metalness,
+      roughness,
+      bagColor,
+      labelMetalness,
+      labelRoughness,
+      lighting: lighting as BagLighting,
+    });
+  }, [
+    finish,
+    metalness,
+    roughness,
+    bagColor,
+    labelMetalness,
+    labelRoughness,
+    lighting,
+    onMaterialChange,
+  ]);
 
   return (
     <>

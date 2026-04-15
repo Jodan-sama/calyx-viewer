@@ -1,245 +1,270 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useState, useCallback, useRef } from "react";
+import { useEffect, useRef } from "react";
 
-const BagViewer = dynamic(() => import("@/components/BagViewer"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex items-center justify-center w-full h-full bg-[#f0f2f7]">
-      <div className="text-center space-y-3">
-        <div className="w-9 h-9 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin mx-auto" />
-        <p className="text-[#272724]/40 text-sm font-light">Loading viewer…</p>
+// Lazy 3D bag preview — client-only (three.js)
+const OutreachBagViewer = dynamic(
+  () => import("@/components/OutreachBagViewer"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full flex items-center justify-center bg-[#eef1f8]">
+        <div className="w-8 h-8 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin" />
       </div>
-    </div>
-  ),
-});
+    ),
+  }
+);
 
-const GEMINI_MODEL = "gemini-3.1-flash-image-preview"; // Nano Banana 2
-const GEMINI_PROMPT = "Make a hyper realistic professional product photography shot of this packaging";
+/* ───────────────────────────────────────────────────────────────
+   Wiggling-lines background (canvas)
+   Multiple overlapping black squiggles that slowly drift and
+   wobble inside each card. Uses perlin-ish sinusoidal offsets
+   instead of actual noise to stay dependency-free.
+   ─────────────────────────────────────────────────────────────── */
+function WigglyLines({ seed = 0 }: { seed?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-export default function Home() {
-  const [textureUrl, setTextureUrl] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
-  const [magicImageUrl, setMagicImageUrl] = useState<string | null>(null);
-  const [isMakingMagic, setIsMakingMagic] = useState(false);
-  const [magicError, setMagicError] = useState<string | null>(null);
-  const captureRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_AI_API_KEY ?? "";
+    let rafId = 0;
+    let w = 0, h = 0;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
 
-  const handleFileUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      if (textureUrl) URL.revokeObjectURL(textureUrl);
-      setTextureUrl(URL.createObjectURL(file));
-      setFileName(file.name);
-      setMagicImageUrl(null);
-      setMagicError(null);
-    },
-    [textureUrl]
-  );
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      w = rect.width;
+      h = rect.height;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
 
-  const handleUpdate = useCallback(() => {
-    captureRef.current?.();
-  }, []);
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
 
-  const handleMakeMagic = useCallback(async () => {
-    if (!screenshotUrl || !apiKey) return;
-    setIsMakingMagic(true);
-    setMagicError(null);
-    setMagicImageUrl(null);
+    // Pre-define a set of lines with randomized-but-seeded params
+    const rand = (i: number) => {
+      const x = Math.sin((seed + 1) * 999 + i * 17.31) * 10000;
+      return x - Math.floor(x);
+    };
 
-    try {
-      // Strip data URL prefix — send raw base64 to the API
-      const [header, base64Data] = screenshotUrl.split(",");
-      const mimeType = header.match(/:(.*?);/)?.[1] ?? "image/png";
+    const LINES = 9;
+    const lines = Array.from({ length: LINES }, (_, i) => ({
+      y0: rand(i * 3) * 0.9 + 0.05,          // base vertical position (0..1)
+      amp: 0.05 + rand(i * 3 + 1) * 0.12,    // wobble amplitude
+      freq: 1 + rand(i * 3 + 2) * 2.5,       // spatial frequency
+      speed: 0.15 + rand(i * 5) * 0.35,      // temporal speed
+      phase: rand(i * 7) * Math.PI * 2,
+      slant: (rand(i * 11) - 0.5) * 0.25,    // slight tilt
+    }));
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: GEMINI_PROMPT },
-                  { inline_data: { mime_type: mimeType, data: base64Data } },
-                ],
-              },
-            ],
-            generationConfig: {
-              responseModalities: ["IMAGE", "TEXT"],
-            },
-          }),
+    const draw = (t: number) => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(20,20,20,0.82)";
+      ctx.lineWidth = 1.3;
+
+      const time = t * 0.001;
+
+      for (const L of lines) {
+        ctx.beginPath();
+        const steps = 64;
+        for (let i = 0; i <= steps; i++) {
+          const u = i / steps;
+          const x = u * w;
+          // combine two sinusoids for a wandering squiggle
+          const wob =
+            Math.sin(u * Math.PI * 2 * L.freq + time * L.speed * 2 + L.phase) *
+              L.amp +
+            Math.sin(u * Math.PI * 2 * L.freq * 0.43 + time * L.speed * 1.3) *
+              L.amp * 0.4;
+          const y = (L.y0 + L.slant * (u - 0.5) + wob * 0.25) * h;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
         }
-      );
-
-      const data = await res.json();
-      console.log("[Make Magic] API response:", JSON.stringify(data).slice(0, 500));
-
-      if (!res.ok) {
-        throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+        ctx.stroke();
       }
 
-      const parts: { text?: string; inlineData?: { mimeType: string; data: string }; inline_data?: { mime_type: string; data: string } }[] =
-        data?.candidates?.[0]?.content?.parts ?? [];
+      rafId = requestAnimationFrame(draw);
+    };
+    rafId = requestAnimationFrame(draw);
 
-      const imgPart = parts.find((p) => p.inlineData?.data || p.inline_data?.data);
-
-      if (imgPart) {
-        // API returns camelCase inlineData/mimeType
-        const img = imgPart.inlineData ?? imgPart.inline_data!;
-        const mimeOut = (img as { mimeType?: string; mime_type?: string }).mimeType
-          ?? (img as { mimeType?: string; mime_type?: string }).mime_type
-          ?? "image/jpeg";
-        setMagicImageUrl(`data:${mimeOut};base64,${img.data}`);
-      } else {
-        const textPart = parts.find((p) => p.text);
-        throw new Error(textPart?.text ?? "No image in response");
-      }
-    } catch (err: unknown) {
-      setMagicError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setIsMakingMagic(false);
-    }
-  }, [screenshotUrl, apiKey]);
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
+  }, [seed]);
 
   return (
-    <div className="relative w-full h-screen flex flex-col bg-white">
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full"
+      style={{ display: "block" }}
+    />
+  );
+}
 
-      {/* ── Header ── */}
-      <header className="flex-shrink-0 flex items-center justify-between px-6 h-[58px] bg-white border-b border-[#e8ecf2] z-20">
-        <div className="flex items-center">
-          <Image
-            src="/calyx-logo.svg"
-            alt="Calyx Containers"
-            width={140}
-            height={37}
-            priority
-            style={{ height: 37, width: "auto" }}
-          />
-        </div>
-        <span className="text-[#272724]/40 text-[11px] font-medium tracking-[0.2em] uppercase hidden sm:block select-none">
-          Calyx Preview
-        </span>
-        <div className="w-[140px]" />
-      </header>
+/* ───────────────────────────────────────────────────────────────
+   Card
+   ─────────────────────────────────────────────────────────────── */
+function Card({
+  href,
+  label,
+  seed,
+  children,
+  flush = false,
+}: {
+  href: string;
+  label: string;
+  seed: number;
+  children: React.ReactNode;
+  flush?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex flex-col items-center gap-6 select-none"
+    >
+      <div
+        className="
+          relative aspect-square w-full max-w-[500px]
+          rounded-[32px] overflow-hidden
+          bg-[#f5f3ee]
+          border border-[#272724]/10
+          shadow-[0_1px_2px_rgba(0,0,0,0.04),0_12px_40px_-12px_rgba(0,0,0,0.12)]
+          transition-all duration-300
+          group-hover:-translate-y-1
+          group-hover:shadow-[0_2px_4px_rgba(0,0,0,0.06),0_24px_60px_-12px_rgba(0,0,0,0.18)]
+          group-hover:border-[#0033A1]/30
+        "
+      >
+        {/* animated squiggles */}
+        <WigglyLines seed={seed} />
 
-      {/* ── Body ── */}
-      <div className="flex flex-1 min-h-0">
-
-        {/* Left panel */}
-        <aside className="flex-shrink-0 w-[200px] bg-white border-r border-[#e8ecf2] flex flex-col items-center pt-5 pb-6 gap-4 z-10 overflow-y-auto">
-
-          {/* Upload */}
-          <label
-            className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
-            style={{ background: "#0033A1" }}
-            onMouseEnter={e => (e.currentTarget.style.background = "#001F60")}
-            onMouseLeave={e => (e.currentTarget.style.background = "#0033A1")}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
-                stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Upload Image
-            <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-          </label>
-
-          {fileName && (
-            <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
-              {fileName.length > 22 ? fileName.slice(0, 20) + "…" : fileName}
-            </p>
-          )}
-
-          <div className="w-[140px] h-px bg-[#e8ecf2]" />
-
-          <p className="text-[9px] font-medium tracking-[0.14em] uppercase text-[#272724]/30 select-none">
-            Label Preview
-          </p>
-
-          {/* Preview image with Update overlay */}
-          {screenshotUrl ? (
-            <div
-              className="relative w-[160px] rounded-lg overflow-hidden border border-[#e8ecf2] shadow-sm group cursor-pointer"
-              onClick={handleUpdate}
-              title="Click to update"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={screenshotUrl} alt="Label preview" className="w-full h-auto block" />
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <span className="text-white text-[10px] font-semibold uppercase tracking-[0.18em]">Update</span>
-              </div>
-            </div>
-          ) : (
-            <div className="w-[160px] h-[120px] rounded-lg border border-dashed border-[#d0d8ef] flex items-center justify-center">
-              <p className="text-[9px] text-[#272724]/25 text-center px-3 leading-relaxed select-none">
-                Preview renders<br/>after load…
-              </p>
-            </div>
-          )}
-
-          {/* Make Magic button */}
-          {screenshotUrl && (
-            <button
-              onClick={handleMakeMagic}
-              disabled={isMakingMagic}
-              className="w-[160px] h-7 rounded-full text-[10px] font-semibold uppercase tracking-[0.12em] transition-all active:scale-95 select-none disabled:opacity-50 disabled:cursor-not-allowed text-white"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #db2777)" }}
-            >
-              {isMakingMagic ? "Generating…" : "✦ Make Magic"}
-            </button>
-          )}
-
-          {/* Error */}
-          {magicError && (
-            <p className="text-[9px] text-red-400 text-center px-2 leading-tight break-all">
-              {magicError}
-            </p>
-          )}
-
-          {/* Loading spinner */}
-          {isMakingMagic && (
-            <div className="w-9 h-9 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-          )}
-
-          {/* AI result */}
-          {magicImageUrl && (
-            <>
-              <div className="w-[140px] h-px bg-[#e8ecf2]" />
-              <a
-                href={magicImageUrl}
-                download="calyx-magic.jpg"
-                className="relative w-[160px] rounded-lg overflow-hidden border border-[#e8ecf2] shadow-sm group block cursor-pointer"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={magicImageUrl} alt="AI generated product shot" className="w-full h-auto block" />
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <span className="text-white text-[10px] font-semibold uppercase tracking-[0.18em]">Download</span>
-                </div>
-              </a>
-            </>
-          )}
-        </aside>
-
-        {/* 3D Canvas */}
-        <div className="flex-1 min-w-0 h-full">
-          <BagViewer
-            textureUrl={textureUrl}
-            onScreenshot={setScreenshotUrl}
-            captureRef={captureRef}
-          />
+        {/* foreground content */}
+        <div
+          className={
+            flush
+              ? "relative z-10 w-full h-full"
+              : "relative z-10 w-full h-full flex items-center justify-center p-8"
+          }
+        >
+          {children}
         </div>
       </div>
 
-      {/* Bottom hint */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">
-        Drag to rotate · Scroll to zoom
+      <span className="text-[#272724] text-[13px] font-semibold tracking-[0.3em] uppercase group-hover:text-[#0033A1] transition-colors">
+        {label}
+      </span>
+    </Link>
+  );
+}
+
+/* 3D mylar-bag preview for the Calyx Preview card. Non-interactive so the
+   click bubbles to the parent Link, auto-rotates for visual interest. */
+function LandingBagPreview() {
+  return (
+    <div className="w-full h-full">
+      <OutreachBagViewer
+        textureUrl={null}
+        interactive={false}
+        autoRotate
+      />
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Supplement jar illustration for the Outreach card
+   ─────────────────────────────────────────────────────────────── */
+function SupplementJarIllustration() {
+  return (
+    <svg
+      viewBox="0 0 220 260"
+      className="w-[70%] h-auto drop-shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
+    >
+      <defs>
+        <linearGradient id="jarBody" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#2a2d33" />
+          <stop offset="50%" stopColor="#5a5f6b" />
+          <stop offset="100%" stopColor="#2a2d33" />
+        </linearGradient>
+        <linearGradient id="jarLid" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#1a1d22" />
+          <stop offset="100%" stopColor="#0d0f12" />
+        </linearGradient>
+        <linearGradient id="jarLabel" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#f8f5ee" />
+          <stop offset="100%" stopColor="#e6e1d4" />
+        </linearGradient>
+      </defs>
+      {/* lid */}
+      <rect x="46" y="20" width="128" height="38" rx="6" fill="url(#jarLid)" />
+      <rect x="46" y="52" width="128" height="4" fill="#000" opacity="0.3" />
+      {/* body */}
+      <rect x="38" y="58" width="144" height="180" rx="12" fill="url(#jarBody)" />
+      {/* label */}
+      <rect x="46" y="88" width="128" height="120" rx="2" fill="url(#jarLabel)" />
+      {/* label content */}
+      <rect x="64" y="104" width="92" height="3" rx="1.5" fill="#272724" opacity="0.6" />
+      <circle cx="110" cy="142" r="22" fill="none" stroke="#0033A1" strokeWidth="2" />
+      <path
+        d="M100 142 l7 7 l14 -14"
+        stroke="#0033A1"
+        strokeWidth="2.4"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <rect x="72" y="178" width="76" height="4" rx="2" fill="#272724" opacity="0.5" />
+      <rect x="82" y="190" width="56" height="3" rx="1.5" fill="#272724" opacity="0.35" />
+    </svg>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Landing page
+   ─────────────────────────────────────────────────────────────── */
+export default function Landing() {
+  return (
+    <div className="relative w-full h-screen overflow-hidden bg-white flex flex-col">
+      {/* Header */}
+      <header className="flex-shrink-0 flex items-center justify-center px-8 h-[64px] border-b border-[#e8ecf2]">
+        <Image
+          src="/calyx-logo.svg"
+          alt="Calyx Containers"
+          width={140}
+          height={37}
+          priority
+          style={{ height: 38, width: "auto" }}
+        />
+      </header>
+
+      {/* Body */}
+      <main className="flex-1 min-h-0 flex flex-col items-center justify-center px-8 py-10 overflow-y-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-12 sm:gap-20 w-full max-w-[1100px]">
+          <Card href="/calyx-preview" label="Calyx Preview" seed={1} flush>
+            <LandingBagPreview />
+          </Card>
+
+          <Card href="/outreach" label="Outreach" seed={7}>
+            <SupplementJarIllustration />
+          </Card>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <div className="flex-shrink-0 text-center pb-5 text-[10px] font-light tracking-[0.24em] uppercase text-[#272724]/25 select-none">
+        Calyx Containers · Internal
       </div>
     </div>
   );
