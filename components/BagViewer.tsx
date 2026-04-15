@@ -101,8 +101,8 @@ function SmokeBackground() {
           segments={40}
           bounds={[5, 1.2, 2]}
           volume={3}
-          color="#ffffff"
-          opacity={0.55}
+          color="#c8ccd6"
+          opacity={0.6}
           fade={40}
           position={[-1.6, 0.2, 0]}
         />
@@ -110,8 +110,8 @@ function SmokeBackground() {
           segments={30}
           bounds={[4, 1.0, 2]}
           volume={2.4}
-          color="#f4f6fb"
-          opacity={0.5}
+          color="#b4b8c4"
+          opacity={0.55}
           fade={40}
           position={[1.8, 0.6, -0.4]}
         />
@@ -119,8 +119,8 @@ function SmokeBackground() {
           segments={28}
           bounds={[3, 0.9, 1.8]}
           volume={2.0}
-          color="#dde2ec"
-          opacity={0.65}
+          color="#9ea3b0"
+          opacity={0.7}
           fade={40}
           position={[0, -0.6, 0.3]}
         />
@@ -160,13 +160,57 @@ function SmokeBackLight() {
   );
 }
 
+// ── Dim scene lighting + shell ───────────────────────────────────────────────
+// Four warm cream point lights placed close to the bag on each side so the
+// dim environment still has shape-defining highlights even after the HDRI and
+// ambient are scaled down to 50%. Intensities are modest — the goal is a
+// moody, candle-lit read, not a studio bounce.
+function DimRimLights() {
+  return (
+    <>
+      {/* Top — warm cream key */}
+      <pointLight position={[0, 1.6, 0.8]} intensity={14} color="#fff0d4" distance={8} decay={2} />
+      {/* Bottom — slightly warmer underfill */}
+      <pointLight position={[0, -1.4, 0.8]} intensity={10} color="#fde9c4" distance={8} decay={2} />
+      {/* Left rim */}
+      <pointLight position={[-1.9, 0, 0.8]} intensity={12} color="#fff3d8" distance={8} decay={2} />
+      {/* Right rim */}
+      <pointLight position={[1.9, 0, 0.8]} intensity={12} color="#fcebc0" distance={8} decay={2} />
+    </>
+  );
+}
+
+// Large aluminum sphere rendered on the inside (THREE.BackSide) so the camera
+// sits inside a soft metal shell. Radius is well outside OrbitControls'
+// maxDistance (10) so the user can orbit without clipping through. The
+// brushed-aluminum finish (metalness 0.9, roughness 0.35) provides subtle
+// grey surroundings that catch the dim cream lights and give the bag's
+// reflections something besides the flat background to land on.
+function AluminumShell() {
+  return (
+    <mesh>
+      <sphereGeometry args={[14, 48, 32]} />
+      <meshStandardMaterial
+        color="#b8bcc3"
+        metalness={0.9}
+        roughness={0.35}
+        side={THREE.BackSide}
+      />
+    </mesh>
+  );
+}
+
 // Satin-reflective floor used in the Smoke scene. Roughness ≈ 0.4 + metalness
 // 0.6 mirrors the Satin finish preset: a soft, diffused reflection rather than
 // a mirror-polished one. mixStrength is bumped so the bag actually reads in the
 // reflection; the lighter blur keeps that reflection recognisable.
+//
+// Y position sits right at the bag's bottom so the package appears to stand on
+// the plane — tight placement is what gives the base of the bag a clean cast
+// reflection rather than a pool of reflection with a floating gap.
 function ReflectiveFloor() {
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.3, 0]} receiveShadow>
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
         blur={[180, 40]}
@@ -333,6 +377,13 @@ export default function BagViewer({
           <>
             <SmokeBackLight />
             <SmokeBackground />
+          </>
+        )}
+
+        {isDim && (
+          <>
+            <DimRimLights />
+            <AluminumShell />
           </>
         )}
 
