@@ -65,53 +65,6 @@ function buildHolographicTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function buildPlaceholderTexture(): THREE.CanvasTexture {
-  const W = 512, H = 768;
-  const canvas = document.createElement("canvas");
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext("2d")!;
-
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0.0, "#14302a");
-  bg.addColorStop(0.55, "#0c1f18");
-  bg.addColorStop(1.0, "#091510");
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-
-  ctx.strokeStyle = "rgba(82,183,136,0.06)"; ctx.lineWidth = 1;
-  for (let gy = 0; gy < H; gy += 32) {
-    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
-  }
-
-  const cx = W / 2, cy = H * 0.375, r = 82;
-  ctx.beginPath();
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i - Math.PI / 6;
-    i === 0
-      ? ctx.moveTo(cx + r * Math.cos(a), cy + r * Math.sin(a))
-      : ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
-  }
-  ctx.closePath();
-  ctx.strokeStyle = "#52b788"; ctx.lineWidth = 2.5; ctx.stroke();
-
-  ctx.fillStyle = "#52b788"; ctx.font = "500 19px Arial";
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("CONTAINERS", cx, H * 0.638);
-
-  ctx.strokeStyle = "rgba(82,183,136,0.28)"; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(cx - 68, H * 0.697); ctx.lineTo(cx + 68, H * 0.697); ctx.stroke();
-  ctx.fillStyle = "rgba(255,255,255,0.22)"; ctx.font = "13px Arial";
-  ctx.fillText("Upload your artwork above", cx, H * 0.755);
-
-  ctx.globalCompositeOperation = "destination-out"; ctx.fillStyle = "rgba(0,0,0,1)";
-  ctx.beginPath(); ctx.arc(cx, cy, r - 5, 0, Math.PI * 2); ctx.fill();
-  ctx.font = "bold 74px Arial"; ctx.fillText("CALYX", cx, H * 0.564);
-  ctx.globalCompositeOperation = "source-over";
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 useGLTF.preload("/mylar_bag.glb");
 
 // ── Label geometry extractor ─────────────────────────────────────────────────
@@ -281,7 +234,6 @@ export default function BagMesh({
   // ── Scene ──────────────────────────────────────────────────────────────────
   const { scene } = useGLTF("/mylar_bag.glb") as { scene: THREE.Group };
 
-  const placeholderTex = useMemo(() => buildPlaceholderTexture(), []);
   const holographicTex = useMemo(() => buildHolographicTexture(), []);
 
   // ── Holographic Foil shader ────────────────────────────────────────────────
@@ -402,8 +354,10 @@ export default function BagMesh({
     };
   }, [backTextureUrl]);
 
-  const frontLabelTex = frontTex ?? placeholderTex;
-  const backLabelTex = backTex ?? placeholderTex;
+  // No fallback texture — if art hasn't loaded yet the decal mesh is skipped
+  // entirely rather than flashing a placeholder.
+  const frontLabelTex = frontTex;
+  const backLabelTex = backTex;
 
   // ── Bag scene + materials ──────────────────────────────────────────────────
   const bagScene = useMemo(() => scene.clone(true), [scene]);
@@ -516,11 +470,13 @@ export default function BagMesh({
       <primitive object={bagScene} />
 
       {/* Labels — front and back use the same polygon-offset material config
-           with independent maps, so uploaded art shows on both sides. */}
-      {frontLabelGeo && (
+           with independent maps, so uploaded art shows on both sides. Each
+           mesh only mounts once its texture has loaded, so the bag never
+           flashes a placeholder. */}
+      {frontLabelGeo && frontLabelTex && (
         <mesh geometry={frontLabelGeo} material={frontLabelMat} renderOrder={1} />
       )}
-      {backLabelGeo && (
+      {backLabelGeo && backLabelTex && (
         <mesh geometry={backLabelGeo} material={backLabelMat} renderOrder={1} />
       )}
     </group>

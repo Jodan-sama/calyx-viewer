@@ -1,9 +1,16 @@
 "use client";
 
-import { Suspense, useRef, useEffect } from "react";
+import { Suspense, useRef, useEffect, useMemo } from "react";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
-import { OrbitControls, Environment, ContactShadows } from "@react-three/drei";
-import { useControls, folder, Leva } from "leva";
+import {
+  OrbitControls,
+  Environment,
+  ContactShadows,
+  Cloud,
+  Clouds,
+  MeshReflectorMaterial,
+} from "@react-three/drei";
+import { useControls, folder } from "leva";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
 import {
@@ -68,15 +75,83 @@ function RaveLights() {
       <pointLight position={[0, 0.5, -2.5]} intensity={35} color="#aa00ff" distance={15} decay={2} />
       {/* Hot pink top */}
       <pointLight position={[0, 3, 1.5]} intensity={30} color="#ff44aa" distance={15} decay={2} />
+      {/* Green from bottom-right — matches the cyan placement on the other side */}
+      <pointLight position={[2, -1.4, 2]} intensity={42} color="#22ff66" distance={15} decay={2} />
       {/* Very dim ambient */}
       <ambientLight intensity={0.05} color="#ffffff" />
     </>
   );
 }
 
+// ── Smoke + reflective floor scene ────────────────────────────────────────────
+// Slowly-drifting dark "smoke" clouds behind the bag plus a dark, mildly
+// reflective floor. Swapped in when the user picks Environment → Smoke.
+function SmokeBackground() {
+  const cloudsRef = useRef<THREE.Group>(null);
+  useFrame((_, delta) => {
+    if (cloudsRef.current) {
+      cloudsRef.current.rotation.y += delta * 0.03;
+    }
+  });
+  return (
+    <group ref={cloudsRef} position={[0, 0.2, -1.8]}>
+      <Clouds limit={200} material={THREE.MeshBasicMaterial}>
+        <Cloud
+          segments={40}
+          bounds={[5, 1.2, 2]}
+          volume={3}
+          color="#2a2f40"
+          opacity={0.45}
+          fade={40}
+          position={[-1.6, 0.2, 0]}
+        />
+        <Cloud
+          segments={30}
+          bounds={[4, 1.0, 2]}
+          volume={2.4}
+          color="#3a3f54"
+          opacity={0.4}
+          fade={40}
+          position={[1.8, 0.6, -0.4]}
+        />
+        <Cloud
+          segments={28}
+          bounds={[3, 0.9, 1.8]}
+          volume={2.0}
+          color="#1f2230"
+          opacity={0.5}
+          fade={40}
+          position={[0, -0.6, 0.3]}
+        />
+      </Clouds>
+    </group>
+  );
+}
+
+function ReflectiveFloor() {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.3, 0]} receiveShadow>
+      <planeGeometry args={[40, 40]} />
+      <MeshReflectorMaterial
+        blur={[300, 80]}
+        resolution={1024}
+        mixBlur={1.2}
+        mixStrength={1.5}
+        roughness={0.75}
+        depthScale={0.6}
+        minDepthThreshold={0.4}
+        maxDepthThreshold={1.4}
+        color="#0f1218"
+        metalness={0.35}
+        mirror={0}
+      />
+    </mesh>
+  );
+}
+
 interface BagViewerProps {
   textureUrl: string | null;
-  /** Back-panel artwork. Null → built-in placeholder. */
+  /** Back-panel artwork. Null → no back decal. */
   backTextureUrl?: string | null;
   onScreenshot?: (url: string) => void;
   captureRef?: React.MutableRefObject<(() => void) | null>;
@@ -92,7 +167,7 @@ export default function BagViewer({
 }: BagViewerProps) {
   const {
     finish, metalness, roughness, bagColor,
-    autoRotate, lighting,
+    autoRotate, lighting, environment,
     labelMetalness, labelRoughness,
   } = useControls({
     Surface: folder({
@@ -132,6 +207,14 @@ export default function BagViewer({
         options: { Studio: "studio", Warehouse: "warehouse", City: "city", Forest: "forest", Sunset: "sunset", Rave: "rave" },
       },
     }, { collapsed: true }),
+
+    Environment: folder({
+      environment: {
+        label: "Scene",
+        value: "default",
+        options: { Default: "default", Smoke: "smoke" },
+      },
+    }, { collapsed: false }),
   });
 
   const preset =
@@ -143,6 +226,14 @@ export default function BagViewer({
     : { metalness, roughness };
 
   const isRave = lighting === "rave";
+  const isSmoke = environment === "smoke";
+
+  // Background colour depends on the chosen environment. Smoke gets a near-black
+  // so the dark clouds and dim reflective floor can read.
+  const backgroundColor = useMemo(() => {
+    if (isSmoke) return "#0a0c12";
+    return "#eef1f8";
+  }, [isSmoke]);
 
   // Emit the current material snapshot whenever any Leva control changes
   useEffect(() => {
@@ -168,71 +259,51 @@ export default function BagViewer({
   ]);
 
   return (
-    <>
-      <Leva
-        theme={{
-          colors: {
-            highlight1: "#0033A1",
-            highlight2: "#001F60",
-            accent1:    "#0033A1",
-            accent2:    "#001F60",
-            accent3:    "#3d5fcf",
-            elevation1: "#f5f7ff",
-            elevation2: "#eef1fb",
-            elevation3: "#DBE6FF",
-            folderWidgetColor: "#0033A1",
-            folderTextColor:   "#272724",
-            toolTipBackground: "#272724",
-            toolTipText:       "#ffffff",
-          },
-          radii:     { xs: "3px", sm: "6px", lg: "8px" },
-          fontSizes: { root: "11px" },
-          sizes:     { rootWidth: "265px" },
-          fonts:     { mono: "Poppins, sans-serif", sans: "Poppins, sans-serif" },
-        }}
-        titleBar={{ title: "Material Controls", drag: false, filter: false }}
-      />
+    <Canvas
+      camera={{ position: [0, -0.3, 4.5], fov: 42 }}
+      gl={{
+        antialias: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: isRave ? 1.1 : isSmoke ? 1.2 : 1.4,
+        preserveDrawingBuffer: true,
+      }}
+      shadows
+      dpr={[1, 2]}
+      style={{ width: "100%", height: "100%" }}
+    >
+      <color attach="background" args={[backgroundColor]} />
+      {!isRave && <ambientLight intensity={isSmoke ? 0.25 : 0.45} />}
 
-      <Canvas
-        camera={{ position: [0, -0.3, 4.5], fov: 42 }}
-        gl={{
-          antialias: true,
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: isRave ? 1.1 : 1.4,
-          preserveDrawingBuffer: true,
-        }}
-        shadows
-        dpr={[1, 2]}
-        style={{ width: "100%", height: "100%" }}
-      >
-        <color attach="background" args={["#eef1f8"]} />
-        {!isRave && <ambientLight intensity={0.45} />}
+      <Suspense fallback={null}>
+        {isRave ? (
+          <>
+            <RaveLights />
+            {/* Turned way down — keeps colored lights dominant on reflections */}
+            <Environment preset="studio" background={false} environmentIntensity={0.22} />
+          </>
+        ) : (
+          <Environment preset={lighting as "studio"} />
+        )}
 
-        <Suspense fallback={null}>
-          {isRave ? (
-            <>
-              <RaveLights />
-              {/* Enough env so metallic surfaces have something to reflect */}
-              <Environment preset="studio" background={false} environmentIntensity={0.8} />
-            </>
-          ) : (
-            <Environment preset={lighting as "studio"} />
-          )}
+        {isSmoke && <SmokeBackground />}
 
-          <BagMesh
-            textureUrl={textureUrl}
-            backTextureUrl={backTextureUrl}
-            metalness={bagProps.metalness}
-            roughness={bagProps.roughness}
-            color={bagColor}
-            labelMetalness={labelMetalness}
-            labelRoughness={labelRoughness}
-            iridescence={preset?.iridescence ?? 0}
-            iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
-            iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
-            finish={finish}
-          />
+        <BagMesh
+          textureUrl={textureUrl}
+          backTextureUrl={backTextureUrl}
+          metalness={bagProps.metalness}
+          roughness={bagProps.roughness}
+          color={bagColor}
+          labelMetalness={labelMetalness}
+          labelRoughness={labelRoughness}
+          iridescence={preset?.iridescence ?? 0}
+          iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
+          iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
+          finish={finish}
+        />
 
+        {isSmoke ? (
+          <ReflectiveFloor />
+        ) : (
           <ContactShadows
             position={[0, -1.28, 0]}
             opacity={isRave ? 0.8 : 0.5}
@@ -240,28 +311,28 @@ export default function BagViewer({
             blur={2.5}
             far={2}
           />
+        )}
 
-          {onScreenshot && (
-            <ScreenshotCapture
-              onCapture={onScreenshot}
-              resetKey={`${textureUrl ?? "default"}|${backTextureUrl ?? "default"}`}
-              captureRef={captureRef}
-            />
-          )}
-        </Suspense>
+        {onScreenshot && (
+          <ScreenshotCapture
+            onCapture={onScreenshot}
+            resetKey={`${textureUrl ?? "default"}|${backTextureUrl ?? "default"}|${environment}`}
+            captureRef={captureRef}
+          />
+        )}
+      </Suspense>
 
-        <OrbitControls
-          target={[0, -0.3, 0]}
-          autoRotate={autoRotate}
-          autoRotateSpeed={1.6}
-          enablePan
-          enableDamping
-          dampingFactor={0.05}
-          minDistance={1.8}
-          maxDistance={10}
-          maxPolarAngle={Math.PI * 0.85}
-        />
-      </Canvas>
-    </>
+      <OrbitControls
+        target={[0, -0.3, 0]}
+        autoRotate={autoRotate}
+        autoRotateSpeed={1.6}
+        enablePan
+        enableDamping
+        dampingFactor={0.05}
+        minDistance={1.8}
+        maxDistance={10}
+        maxPolarAngle={Math.PI * 0.85}
+      />
+    </Canvas>
   );
 }

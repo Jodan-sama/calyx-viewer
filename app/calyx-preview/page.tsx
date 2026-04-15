@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useState, useCallback, useRef } from "react";
+import { Leva } from "leva";
 import SaveToOutreachDialog, {
   type SaveSource,
 } from "@/components/SaveToOutreachDialog";
@@ -14,6 +15,28 @@ import {
   DEFAULT_MATERIAL,
   type BagMaterial,
 } from "@/lib/bagMaterial";
+
+// Shared theme for the docked Leva panel — matches the rest of the UI chrome.
+const LEVA_THEME = {
+  colors: {
+    highlight1: "#0033A1",
+    highlight2: "#001F60",
+    accent1: "#0033A1",
+    accent2: "#001F60",
+    accent3: "#3d5fcf",
+    elevation1: "#f5f7ff",
+    elevation2: "#eef1fb",
+    elevation3: "#DBE6FF",
+    folderWidgetColor: "#0033A1",
+    folderTextColor: "#272724",
+    toolTipBackground: "#272724",
+    toolTipText: "#ffffff",
+  },
+  radii: { xs: "3px", sm: "6px", lg: "8px" },
+  fontSizes: { root: "11px" },
+  sizes: { rootWidth: "100%" },
+  fonts: { mono: "Poppins, sans-serif", sans: "Poppins, sans-serif" },
+};
 
 const BagViewer = dynamic(() => import("@/components/BagViewer"), {
   ssr: false,
@@ -202,7 +225,7 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Upload Bag Front
+            Bag Front
             <input type="file" accept="image/*" className="hidden" onChange={handleFrontUpload} />
           </label>
 
@@ -223,7 +246,7 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Upload Bag Back
+            Bag Back
             <input type="file" accept="image/*" className="hidden" onChange={handleBackUpload} />
           </label>
 
@@ -357,7 +380,7 @@ export default function CalyxPreview() {
         </aside>
 
         {/* 3D Canvas */}
-        <div className="flex-1 min-w-0 h-full">
+        <div className="flex-1 min-w-0 h-full relative">
           <BagViewer
             textureUrl={frontTextureUrl}
             backTextureUrl={backTextureUrl}
@@ -365,12 +388,28 @@ export default function CalyxPreview() {
             captureRef={captureRef}
             onMaterialChange={handleMaterialChange}
           />
+          {/* Bottom hint sits over the canvas */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">
+            Drag to rotate · Scroll to zoom
+          </div>
         </div>
-      </div>
 
-      {/* Bottom hint */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">
-        Drag to rotate · Scroll to zoom
+        {/* Material Controls — docked right column, scrollable */}
+        <aside className="flex-shrink-0 w-[280px] bg-white border-l border-[#e8ecf2] flex flex-col overflow-hidden z-10">
+          <header className="flex-shrink-0 h-[38px] flex items-center px-4 border-b border-[#e8ecf2] select-none">
+            <span className="text-[10px] font-semibold tracking-[0.22em] uppercase text-[#272724]/60">
+              Material Controls
+            </span>
+          </header>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <Leva
+              fill
+              flat
+              titleBar={false}
+              theme={LEVA_THEME}
+            />
+          </div>
+        </aside>
       </div>
 
       {saveSource && (

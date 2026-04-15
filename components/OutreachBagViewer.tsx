@@ -36,6 +36,7 @@ function RaveLights() {
       <pointLight position={[2, 0, 2.5]} intensity={45} color="#00ffee" distance={15} decay={2} />
       <pointLight position={[0, 0.5, -2.5]} intensity={35} color="#aa00ff" distance={15} decay={2} />
       <pointLight position={[0, 3, 1.5]} intensity={30} color="#ff44aa" distance={15} decay={2} />
+      <pointLight position={[2, -1.4, 2]} intensity={42} color="#22ff66" distance={15} decay={2} />
       <ambientLight intensity={0.05} color="#ffffff" />
     </>
   );
@@ -122,7 +123,7 @@ export default function OutreachBagViewer({
         {isRave ? (
           <>
             <RaveLights />
-            <Environment preset="studio" background={false} environmentIntensity={0.8} />
+            <Environment preset="studio" background={false} environmentIntensity={0.22} />
           </>
         ) : (
           <Environment preset={mat.lighting as "studio"} />
