@@ -13,6 +13,7 @@ import {
 import { useControls, folder } from "leva";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
+import SupplementJarMesh from "./SupplementJarMesh";
 import {
   FINISH_PRESETS,
   type BagFinish,
@@ -247,10 +248,22 @@ export default function BagViewer({
   onMaterialChange,
 }: BagViewerProps) {
   const {
+    model,
     finish, metalness, roughness, bagColor,
     autoRotate, lighting, environment,
     labelMetalness, labelRoughness,
   } = useControls({
+    Model: folder({
+      model: {
+        label: "Model",
+        value: "bag",
+        options: {
+          "Mylar Bag": "bag",
+          "Supplement Jar": "jar",
+        },
+      },
+    }, { collapsed: false }),
+
     Surface: folder({
       finish: {
         label: "Finish",
@@ -388,20 +401,29 @@ export default function BagViewer({
           </>
         )}
 
-        <BagMesh
-          textureUrl={textureUrl}
-          backTextureUrl={backTextureUrl}
-          metalness={bagProps.metalness}
-          roughness={bagProps.roughness}
-          color={bagColor}
-          labelMetalness={labelMetalness}
-          labelRoughness={labelRoughness}
-          iridescence={preset?.iridescence ?? 0}
-          iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
-          iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
-          finish={finish}
-          envIntensityScale={dimScale}
-        />
+        {model === "bag" ? (
+          <BagMesh
+            textureUrl={textureUrl}
+            backTextureUrl={backTextureUrl}
+            metalness={bagProps.metalness}
+            roughness={bagProps.roughness}
+            color={bagColor}
+            labelMetalness={labelMetalness}
+            labelRoughness={labelRoughness}
+            iridescence={preset?.iridescence ?? 0}
+            iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
+            iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
+            finish={finish}
+            envIntensityScale={dimScale}
+          />
+        ) : (
+          <SupplementJarMesh
+            textureUrl={textureUrl}
+            labelMetalness={labelMetalness}
+            labelRoughness={labelRoughness}
+            envIntensityScale={dimScale}
+          />
+        )}
 
         {isSmoke ? (
           <ReflectiveFloor />
