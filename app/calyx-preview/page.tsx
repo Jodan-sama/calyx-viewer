@@ -8,7 +8,12 @@ import SaveToOutreachDialog, {
   type SaveSource,
 } from "@/components/SaveToOutreachDialog";
 import ImagePreviewModal from "@/components/ImagePreviewModal";
-import { DEFAULT_MATERIAL, type BagMaterial } from "@/lib/bagMaterial";
+import {
+  DEFAULT_BACK_TEXTURE,
+  DEFAULT_FRONT_TEXTURE,
+  DEFAULT_MATERIAL,
+  type BagMaterial,
+} from "@/lib/bagMaterial";
 
 const BagViewer = dynamic(() => import("@/components/BagViewer"), {
   ssr: false,
@@ -26,9 +31,19 @@ const GEMINI_MODEL = "gemini-3.1-flash-image-preview"; // Nano Banana 2
 const GEMINI_PROMPT = "Make a hyper realistic professional product photography shot of this packaging";
 
 export default function CalyxPreview() {
-  const [textureUrl, setTextureUrl] = useState<string | null>(null);
-  const [labelFile, setLabelFile] = useState<File | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
+  // Front artwork — defaults to the branded front asset, overridden by upload.
+  const [frontTextureUrl, setFrontTextureUrl] = useState<string>(
+    DEFAULT_FRONT_TEXTURE
+  );
+  const [frontFile, setFrontFile] = useState<File | null>(null);
+  const [frontFileName, setFrontFileName] = useState<string | null>(null);
+
+  // Back artwork — defaults to the branded back asset, overridden by upload.
+  const [backTextureUrl, setBackTextureUrl] = useState<string>(
+    DEFAULT_BACK_TEXTURE
+  );
+  const [backFileName, setBackFileName] = useState<string | null>(null);
+
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [magicImageUrl, setMagicImageUrl] = useState<string | null>(null);
   const [isMakingMagic, setIsMakingMagic] = useState(false);
@@ -44,18 +59,40 @@ export default function CalyxPreview() {
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_AI_API_KEY ?? "";
 
-  const handleFileUpload = useCallback(
+  // Shared helper: swap a blob-URL slot, revoking the previous URL if one was
+  // created via URL.createObjectURL. Defaults (which are plain /images/…) are
+  // left alone on revoke.
+  const swapBlobUrl = useCallback(
+    (prev: string, next: string) => {
+      if (prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+      return next;
+    },
+    []
+  );
+
+  const handleFrontUpload = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      if (textureUrl) URL.revokeObjectURL(textureUrl);
-      setTextureUrl(URL.createObjectURL(file));
-      setLabelFile(file);
-      setFileName(file.name);
+      setFrontTextureUrl((prev) => swapBlobUrl(prev, URL.createObjectURL(file)));
+      setFrontFile(file);
+      setFrontFileName(file.name);
       setMagicImageUrl(null);
       setMagicError(null);
     },
-    [textureUrl]
+    [swapBlobUrl]
+  );
+
+  const handleBackUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setBackTextureUrl((prev) => swapBlobUrl(prev, URL.createObjectURL(file)));
+      setBackFileName(file.name);
+      setMagicImageUrl(null);
+      setMagicError(null);
+    },
+    [swapBlobUrl]
   );
 
   const handleUpdate = useCallback(() => {
@@ -154,7 +191,7 @@ export default function CalyxPreview() {
         {/* Left panel */}
         <aside className="flex-shrink-0 w-[200px] bg-white border-r border-[#e8ecf2] flex flex-col items-center pt-5 pb-6 gap-4 z-10 overflow-y-auto">
 
-          {/* Upload */}
+          {/* Upload Bag Front */}
           <label
             className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
             style={{ background: "#0033A1" }}
@@ -165,13 +202,34 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Upload Image
-            <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+            Upload Bag Front
+            <input type="file" accept="image/*" className="hidden" onChange={handleFrontUpload} />
           </label>
 
-          {fileName && (
+          {frontFileName && (
             <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
-              {fileName.length > 22 ? fileName.slice(0, 20) + "…" : fileName}
+              {frontFileName.length > 22 ? frontFileName.slice(0, 20) + "…" : frontFileName}
+            </p>
+          )}
+
+          {/* Upload Bag Back */}
+          <label
+            className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
+            style={{ background: "#272724" }}
+            onMouseEnter={e => (e.currentTarget.style.background = "#0033A1")}
+            onMouseLeave={e => (e.currentTarget.style.background = "#272724")}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
+                stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Upload Bag Back
+            <input type="file" accept="image/*" className="hidden" onChange={handleBackUpload} />
+          </label>
+
+          {backFileName && (
+            <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
+              {backFileName.length > 22 ? backFileName.slice(0, 20) + "…" : backFileName}
             </p>
           )}
 
@@ -214,21 +272,21 @@ export default function CalyxPreview() {
             </button>
           )}
 
-          {/* Save label as 3D bag — always visible, disabled until upload */}
+          {/* Save label as 3D bag — always visible, disabled until a front upload */}
           <button
             onClick={() =>
-              labelFile &&
+              frontFile &&
               setSaveSource({
                 kind: "bag-3d",
-                file: labelFile,
+                file: frontFile,
                 material: materialRef.current,
               })
             }
-            disabled={!labelFile}
+            disabled={!frontFile}
             title={
-              labelFile
+              frontFile
                 ? "Save this label as a 3D bag slot on Outreach"
-                : "Upload a label first"
+                : "Upload a bag front first"
             }
             className="w-[160px] h-7 rounded-full text-[10px] font-semibold uppercase tracking-[0.12em] transition-all active:scale-95 select-none text-white bg-[#272724] hover:bg-[#0033A1] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#272724]"
           >
@@ -301,7 +359,8 @@ export default function CalyxPreview() {
         {/* 3D Canvas */}
         <div className="flex-1 min-w-0 h-full">
           <BagViewer
-            textureUrl={textureUrl}
+            textureUrl={frontTextureUrl}
+            backTextureUrl={backTextureUrl}
             onScreenshot={setScreenshotUrl}
             captureRef={captureRef}
             onMaterialChange={handleMaterialChange}

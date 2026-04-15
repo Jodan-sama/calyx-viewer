@@ -7,7 +7,10 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 
 interface BagMeshProps {
+  /** Front-panel artwork. Null → built-in placeholder. */
   textureUrl: string | null;
+  /** Back-panel artwork. Null → built-in placeholder (shared with front). */
+  backTextureUrl?: string | null;
   metalness: number;
   roughness: number;
   color: string;
@@ -111,24 +114,177 @@ function buildPlaceholderTexture(): THREE.CanvasTexture {
 
 useGLTF.preload("/mylar_bag.glb");
 
+// ── Label geometry extractor ─────────────────────────────────────────────────
+// Collects mesh triangles that make up a given side of the bag (front/back),
+// remaps their UVs to cover the panel from XY position, and returns a single
+// merged BufferGeometry ready to be rendered as a decal mesh on top of the bag.
+// Back-side UVs are mirrored on X so uploaded artwork reads correctly when
+// viewed from behind.
+function buildLabelGeo(
+  rootGroup: THREE.Group,
+  side: "front" | "back"
+): THREE.BufferGeometry | null {
+  const groupInv = new THREE.Matrix4()
+    .copy(rootGroup.matrixWorld)
+    .invert();
+  const collected: THREE.BufferGeometry[] = [];
+  const tmpN = new THREE.Vector3();
+
+  rootGroup.traverse((obj) => {
+    const m = obj as THREE.Mesh;
+    if (!m.isMesh || !m.geometry.attributes.normal) return;
+
+    // Average world-space Z normal — lets us skip meshes whose face points
+    // hard away from the side we're capturing.
+    const normals = m.geometry.attributes.normal;
+    const normalMat = new THREE.Matrix3().getNormalMatrix(m.matrixWorld);
+    let sumZ = 0,
+      count = 0;
+    for (let i = 0; i < normals.count; i += 32) {
+      tmpN
+        .fromBufferAttribute(normals, i)
+        .applyMatrix3(normalMat)
+        .normalize();
+      sumZ += tmpN.z;
+      count++;
+    }
+    const avgZ = sumZ / count;
+    // Front pass: skip meshes strongly facing -Z (back panel).
+    // Back pass:  skip meshes strongly facing +Z (front panel).
+    if (side === "front" && avgZ <= -0.5) return;
+    if (side === "back" && avgZ >= 0.5) return;
+
+    const cloned = m.geometry.clone();
+    cloned.applyMatrix4(
+      new THREE.Matrix4().multiplyMatrices(groupInv, m.matrixWorld)
+    );
+    if (!cloned.attributes.uv) {
+      cloned.setAttribute(
+        "uv",
+        new THREE.BufferAttribute(
+          new Float32Array(cloned.attributes.position.count * 2),
+          2
+        )
+      );
+    }
+    collected.push(cloned);
+  });
+
+  if (collected.length === 0) return null;
+
+  const geo =
+    collected.length === 1
+      ? collected[0]
+      : mergeGeometries(collected, false) ?? collected[0];
+
+  geo.computeVertexNormals();
+
+  // Triangle-level filter by centroid Z.
+  // After baking, group-local Z range is ≈ -0.021 (back) to +0.021 (front).
+  const pos0 = geo.attributes.position as THREE.BufferAttribute;
+  const idx = geo.index;
+  if (idx) {
+    const keep: number[] = [];
+    for (let i = 0; i < idx.count; i += 3) {
+      const ia = idx.getX(i),
+        ib = idx.getX(i + 1),
+        ic = idx.getX(i + 2);
+      const cz =
+        (pos0.getZ(ia) + pos0.getZ(ib) + pos0.getZ(ic)) / 3;
+      if (side === "front" && cz > 0.0) keep.push(ia, ib, ic);
+      else if (side === "back" && cz < 0.0) keep.push(ia, ib, ic);
+    }
+    geo.setIndex(keep);
+  }
+  geo.computeVertexNormals();
+
+  // UVs from XY bounds; mirror U for the back so art reads correctly.
+  const posAttr = geo.attributes.position as THREE.BufferAttribute;
+  const uvAttr = geo.attributes.uv as THREE.BufferAttribute;
+  let xMin = Infinity,
+    xMax = -Infinity,
+    yMin = Infinity,
+    yMax = -Infinity;
+  for (let i = 0; i < posAttr.count; i++) {
+    const x = posAttr.getX(i),
+      y = posAttr.getY(i);
+    if (x < xMin) xMin = x;
+    if (x > xMax) xMax = x;
+    if (y < yMin) yMin = y;
+    if (y > yMax) yMax = y;
+  }
+  const xRange = xMax - xMin,
+    yRange = yMax - yMin;
+  for (let i = 0; i < uvAttr.count; i++) {
+    const u = (posAttr.getX(i) - xMin) / xRange;
+    const v = (posAttr.getY(i) - yMin) / yRange;
+    uvAttr.setXY(i, side === "back" ? 1 - u : u, v);
+  }
+  uvAttr.needsUpdate = true;
+
+  return geo;
+}
+
+// Shared label-texture loader: decodes the image, zeroes pure-transparent
+// pixels (fixes haloing on PNG alpha), and wraps it in a CanvasTexture.
+async function loadLabelTexture(
+  url: string,
+  signal: { cancelled: boolean }
+): Promise<THREE.CanvasTexture | null> {
+  try {
+    const blob = await fetch(url).then((r) => r.blob());
+    const bitmap = await createImageBitmap(blob, {
+      premultiplyAlpha: "none",
+    });
+    if (signal.cancelled) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(bitmap, 0, 0);
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 10) d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0;
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 16;
+    return tex;
+  } catch (e) {
+    console.error("Texture load failed:", e);
+    return null;
+  }
+}
 
 export default function BagMesh({
-  textureUrl, metalness, roughness, color, labelMetalness, labelRoughness,
-  iridescence = 0, iridescenceIOR = 1.5, iridescenceThicknessRange = [100, 800],
+  textureUrl,
+  backTextureUrl = null,
+  metalness,
+  roughness,
+  color,
+  labelMetalness,
+  labelRoughness,
+  iridescence = 0,
+  iridescenceIOR = 1.5,
+  iridescenceThicknessRange = [100, 800],
   finish = "",
 }: BagMeshProps) {
-  // ── Refs (declared first so closures below can reference them) ────────────
-  const groupRef     = useRef<THREE.Group>(null);
-  const imgDimsRef   = useRef({ w: 512, h: 768 }); // updated when image loads
-  const decalDirty   = useRef(true);                // triggers decal rebuild in useFrame
+  // ── Refs ───────────────────────────────────────────────────────────────────
+  const groupRef = useRef<THREE.Group>(null);
+  const decalDirty = useRef(true);
 
-  // ── Scene ─────────────────────────────────────────────────────────────────
+  // ── Scene ──────────────────────────────────────────────────────────────────
   const { scene } = useGLTF("/mylar_bag.glb") as { scene: THREE.Group };
 
-  const placeholderTex  = useMemo(() => buildPlaceholderTexture(), []);
-  const holographicTex  = useMemo(() => buildHolographicTexture(), []);
+  const placeholderTex = useMemo(() => buildPlaceholderTexture(), []);
+  const holographicTex = useMemo(() => buildHolographicTexture(), []);
 
-  // ── Holographic Foil shader ───────────────────────────────────────────────
+  // ── Holographic Foil shader ────────────────────────────────────────────────
   const holographicFoilMat = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
       metalness: 1.0, roughness: 0.0, envMapIntensity: 0.6, side: THREE.DoubleSide,
@@ -165,7 +321,7 @@ export default function BagMesh({
     return mat;
   }, []);
 
-  // ── Multi-chrome shader ───────────────────────────────────────────────────
+  // ── Multi-chrome shader ────────────────────────────────────────────────────
   const multiChromeMat = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
       metalness: 1.0, roughness: 0.0, envMapIntensity: 0.25, side: THREE.DoubleSide,
@@ -206,55 +362,50 @@ export default function BagMesh({
     return mat;
   }, []);
 
-  // ── Texture loading ───────────────────────────────────────────────────────
-  const [uploadedTex, setUploadedTex] = useState<THREE.Texture | null>(null);
+  // ── Texture loading (front + back) ─────────────────────────────────────────
+  const [frontTex, setFrontTex] = useState<THREE.Texture | null>(null);
+  const [backTex, setBackTex] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
     if (!textureUrl) {
-      setUploadedTex(null);
-      imgDimsRef.current = { w: 512, h: 768 };
+      setFrontTex(null);
       decalDirty.current = true;
       return;
     }
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const blob = await fetch(textureUrl).then(r => r.blob());
-        const bitmap = await createImageBitmap(blob, { premultiplyAlpha: "none" });
-        if (cancelled) return;
-
-        imgDimsRef.current = { w: bitmap.width, h: bitmap.height };
+    const signal = { cancelled: false };
+    loadLabelTexture(textureUrl, signal).then((tex) => {
+      if (!signal.cancelled && tex) {
         decalDirty.current = true;
-
-        const canvas = document.createElement("canvas");
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-        ctx.drawImage(bitmap, 0, 0);
-
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const d = imgData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          if (d[i + 3] < 10) d[i] = d[i + 1] = d[i + 2] = d[i + 3] = 0;
-        }
-        ctx.putImageData(imgData, 0, 0);
-
-        const tex = new THREE.CanvasTexture(canvas);
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 16;
-        setUploadedTex(tex);
-      } catch (e) {
-        console.error("Texture load failed:", e);
+        setFrontTex(tex);
       }
-    })();
-
-    return () => { cancelled = true; };
+    });
+    return () => {
+      signal.cancelled = true;
+    };
   }, [textureUrl]);
 
-  const labelTex = uploadedTex ?? placeholderTex;
+  useEffect(() => {
+    if (!backTextureUrl) {
+      setBackTex(null);
+      decalDirty.current = true;
+      return;
+    }
+    const signal = { cancelled: false };
+    loadLabelTexture(backTextureUrl, signal).then((tex) => {
+      if (!signal.cancelled && tex) {
+        decalDirty.current = true;
+        setBackTex(tex);
+      }
+    });
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [backTextureUrl]);
 
-  // ── Bag scene + materials ─────────────────────────────────────────────────
+  const frontLabelTex = frontTex ?? placeholderTex;
+  const backLabelTex = backTex ?? placeholderTex;
+
+  // ── Bag scene + materials ──────────────────────────────────────────────────
   const bagScene = useMemo(() => scene.clone(true), [scene]);
 
   const mylarMat = useMemo(() => new THREE.MeshPhysicalMaterial({
@@ -300,9 +451,10 @@ export default function BagMesh({
   // Mark label geo dirty when bag scene changes
   useEffect(() => { decalDirty.current = true; }, [bagScene]);
 
-  // ── Label material — simple transparent with polygon offset ─────────────────
-  const labelMat = useMemo(() => {
-    return new THREE.MeshStandardMaterial({
+  // ── Label materials (front + back) ─────────────────────────────────────────
+  // Two separate materials so front and back can hold different maps.
+  const buildLabelMat = () =>
+    new THREE.MeshStandardMaterial({
       metalness: labelMetalness,
       roughness: labelRoughness,
       envMapIntensity: 0.5,
@@ -313,117 +465,49 @@ export default function BagMesh({
       polygonOffsetFactor: -4,
       polygonOffsetUnits: -4,
     });
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const frontLabelMat = useMemo(buildLabelMat, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const backLabelMat = useMemo(buildLabelMat, []);
 
-  // Sync label material props when they change
   useEffect(() => {
-    labelMat.map = labelTex;
-    labelMat.metalness = labelMetalness;
-    labelMat.roughness = labelRoughness;
-    labelMat.needsUpdate = true;
-  }, [labelTex, labelMetalness, labelRoughness, labelMat]);
+    frontLabelMat.map = frontLabelTex;
+    frontLabelMat.metalness = labelMetalness;
+    frontLabelMat.roughness = labelRoughness;
+    frontLabelMat.needsUpdate = true;
+  }, [frontLabelTex, labelMetalness, labelRoughness, frontLabelMat]);
 
-  // ── Front-face label geometry (full front panel coverage) ─────────────────
+  useEffect(() => {
+    backLabelMat.map = backLabelTex;
+    backLabelMat.metalness = labelMetalness;
+    backLabelMat.roughness = labelRoughness;
+    backLabelMat.needsUpdate = true;
+  }, [backLabelTex, labelMetalness, labelRoughness, backLabelMat]);
+
+  // ── Label geometries (front + back, regenerated on decalDirty) ─────────────
   const [frontLabelGeo, setFrontLabelGeo] = useState<THREE.BufferGeometry | null>(null);
+  const [backLabelGeo, setBackLabelGeo] = useState<THREE.BufferGeometry | null>(null);
 
-  // Dispose old geometry when replaced
   useEffect(() => () => { frontLabelGeo?.dispose(); }, [frontLabelGeo]);
+  useEffect(() => () => { backLabelGeo?.dispose(); }, [backLabelGeo]);
 
-  // ── Animation loop: float + decal rebuild ─────────────────────────────────
+  // ── Animation loop: float + decal rebuild ──────────────────────────────────
   const BASE_Y = -1.1;
 
   useFrame(({ clock }) => {
     if (!groupRef.current) return;
 
-    // Float animation
     groupRef.current.position.y = BASE_Y + Math.sin(clock.elapsedTime * 0.6) * 0.02;
 
-    // Rebuild decal once per dirty flag (runs the frame after state settles)
     if (!decalDirty.current) return;
     decalDirty.current = false;
-
-    // Ensure world matrices are current for every node in the sub-tree
     groupRef.current.updateMatrixWorld(true);
 
-    // ── Collect ALL meshes whose average world-space normal faces forward (+Z) ─
-    // Using a threshold instead of picking just the single best mesh ensures we
-    // capture every mesh object that makes up the front of the bag.
-    const groupInv = new THREE.Matrix4().copy(groupRef.current.matrixWorld).invert();
-    const forwardGeos: THREE.BufferGeometry[] = [];
-    const tmp = new THREE.Vector3();
-
-    groupRef.current.traverse((obj) => {
-      const m = obj as THREE.Mesh;
-      if (!m.isMesh || !m.geometry.attributes.normal) return;
-      const normals = m.geometry.attributes.normal;
-      const normalMat = new THREE.Matrix3().getNormalMatrix(m.matrixWorld);
-      let sumZ = 0, count = 0;
-      for (let i = 0; i < normals.count; i += 32) {
-        tmp.fromBufferAttribute(normals, i).applyMatrix3(normalMat).normalize();
-        sumZ += tmp.z; count++;
-      }
-      const avgZ = sumZ / count;
-      if (avgZ <= -0.5) return; // include front + gusset meshes, exclude pure back/bottom
-
-      const cloned = m.geometry.clone();
-      cloned.applyMatrix4(new THREE.Matrix4().multiplyMatrices(groupInv, m.matrixWorld));
-      // Ensure UV attribute exists (needed for mergeGeometries)
-      if (!cloned.attributes.uv) {
-        cloned.setAttribute("uv", new THREE.BufferAttribute(
-          new Float32Array(cloned.attributes.position.count * 2), 2
-        ));
-      }
-      forwardGeos.push(cloned);
-    });
-
-    if (forwardGeos.length === 0) return;
-
-    // Merge into a single geometry (handles multiple mesh objects on the front face)
-    const geo = forwardGeos.length === 1
-      ? forwardGeos[0]
-      : (mergeGeometries(forwardGeos, false) ?? forwardGeos[0]);
-
-    // ── Compute vertex normals first so we can identify front-panel vertices ────
-    geo.computeVertexNormals();
-
-    // ── CPU-filter: keep only triangles whose centroid Z > -0.002 ────────────
-    // After baking transforms, group-local Z range is -0.021 (back) to +0.021 (front).
-    // Triangles with centroid Z > -0.002 are front panel + front-half gussets.
-    // This is camera-independent and removes the back panel cleanly.
-    const pos0 = geo.attributes.position as THREE.BufferAttribute;
-    const idx = geo.index;
-    if (idx) {
-      const keep: number[] = [];
-      for (let i = 0; i < idx.count; i += 3) {
-        const ia = idx.getX(i), ib = idx.getX(i+1), ic = idx.getX(i+2);
-        const cz = (pos0.getZ(ia) + pos0.getZ(ib) + pos0.getZ(ic)) / 3;
-        if (cz > 0.0) keep.push(ia, ib, ic);
-      }
-      geo.setIndex(keep);
-    }
-    geo.computeVertexNormals();
-
-    // ── UV from XY position, bounded by front-panel-only vertices ────────────
-    const posAttr = geo.attributes.position as THREE.BufferAttribute;
-    const uvAttr  = geo.attributes.uv as THREE.BufferAttribute;
-    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i), y = posAttr.getY(i);
-      if (x < xMin) xMin = x; if (x > xMax) xMax = x;
-      if (y < yMin) yMin = y; if (y > yMax) yMax = y;
-    }
-    const xRange = xMax - xMin, yRange = yMax - yMin;
-    for (let i = 0; i < uvAttr.count; i++) {
-      uvAttr.setXY(
-        i,
-        (posAttr.getX(i) - xMin) / xRange,
-        (posAttr.getY(i) - yMin) / yRange
-      );
-    }
-    uvAttr.needsUpdate = true;
-
-    setFrontLabelGeo(geo);
+    const nextFront = buildLabelGeo(groupRef.current, "front");
+    const nextBack = buildLabelGeo(groupRef.current, "back");
+    if (nextFront) setFrontLabelGeo(nextFront);
+    if (nextBack) setBackLabelGeo(nextBack);
   });
 
   return (
@@ -431,11 +515,13 @@ export default function BagMesh({
       {/* Bag */}
       <primitive object={bagScene} />
 
-      {/* Label — front mesh geometry with position-based UVs.
-           Material uses onBeforeCompile shader to fade alpha on gusset faces
-           via view-space normal Z, so only the flat front panel shows the label. */}
+      {/* Labels — front and back use the same polygon-offset material config
+           with independent maps, so uploaded art shows on both sides. */}
       {frontLabelGeo && (
-        <mesh geometry={frontLabelGeo} material={labelMat} renderOrder={1} />
+        <mesh geometry={frontLabelGeo} material={frontLabelMat} renderOrder={1} />
+      )}
+      {backLabelGeo && (
+        <mesh geometry={backLabelGeo} material={backLabelMat} renderOrder={1} />
       )}
     </group>
   );

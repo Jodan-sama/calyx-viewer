@@ -76,6 +76,8 @@ function RaveLights() {
 
 interface BagViewerProps {
   textureUrl: string | null;
+  /** Back-panel artwork. Null → built-in placeholder. */
+  backTextureUrl?: string | null;
   onScreenshot?: (url: string) => void;
   captureRef?: React.MutableRefObject<(() => void) | null>;
   onMaterialChange?: (material: BagMaterial) => void;
@@ -83,6 +85,7 @@ interface BagViewerProps {
 
 export default function BagViewer({
   textureUrl,
+  backTextureUrl = null,
   onScreenshot,
   captureRef,
   onMaterialChange,
@@ -218,6 +221,7 @@ export default function BagViewer({
 
           <BagMesh
             textureUrl={textureUrl}
+            backTextureUrl={backTextureUrl}
             metalness={bagProps.metalness}
             roughness={bagProps.roughness}
             color={bagColor}
@@ -238,7 +242,11 @@ export default function BagViewer({
           />
 
           {onScreenshot && (
-            <ScreenshotCapture onCapture={onScreenshot} resetKey={textureUrl ?? "default"} captureRef={captureRef} />
+            <ScreenshotCapture
+              onCapture={onScreenshot}
+              resetKey={`${textureUrl ?? "default"}|${backTextureUrl ?? "default"}`}
+              captureRef={captureRef}
+            />
           )}
         </Suspense>
 

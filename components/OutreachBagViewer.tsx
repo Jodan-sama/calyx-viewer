@@ -6,6 +6,8 @@ import { OrbitControls, Environment, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
 import {
+  DEFAULT_BACK_TEXTURE,
+  DEFAULT_FRONT_TEXTURE,
   DEFAULT_MATERIAL,
   FINISH_PRESETS,
   resolveSurface,
@@ -13,8 +15,10 @@ import {
 } from "@/lib/bagMaterial";
 
 interface Props {
-  /** Label artwork. Pass null to render the built-in Calyx-branded placeholder. */
+  /** Front-panel artwork. Null → default Calyx bag front. */
   textureUrl: string | null;
+  /** Back-panel artwork. Null → default Calyx bag back. */
+  backTextureUrl?: string | null;
   /** Captured material config from BagViewer; null → DEFAULT_MATERIAL. */
   material?: BagMaterial | null;
   /** When false, OrbitControls are dropped and canvas ignores pointer events
@@ -59,6 +63,7 @@ function SpinningGroup({
  */
 export default function OutreachBagViewer({
   textureUrl,
+  backTextureUrl = null,
   material,
   interactive = true,
   autoRotate = false,
@@ -70,9 +75,15 @@ export default function OutreachBagViewer({
   const iridescenceCfg =
     mat.finish !== "custom" ? FINISH_PRESETS[mat.finish] : null;
 
+  // Fall back to the branded default artwork on both sides so the playback
+  // viewer never renders with the procedural placeholder.
+  const resolvedFront = textureUrl ?? DEFAULT_FRONT_TEXTURE;
+  const resolvedBack = backTextureUrl ?? DEFAULT_BACK_TEXTURE;
+
   const bag = (
     <BagMesh
-      textureUrl={textureUrl}
+      textureUrl={resolvedFront}
+      backTextureUrl={resolvedBack}
       metalness={surface.metalness}
       roughness={surface.roughness}
       color={mat.bagColor}

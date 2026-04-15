@@ -4,6 +4,11 @@
  * and OutreachBagViewer (playback — reads stored config).
  */
 
+/** Default artwork rendered on the bag when no user upload is provided.
+ *  Both URLs are public static assets, safe to use server- or client-side. */
+export const DEFAULT_FRONT_TEXTURE = "/images/calyx-bag-front.png";
+export const DEFAULT_BACK_TEXTURE = "/images/calyx-bag-back.png";
+
 export type BagFinish =
   | "metallic"
   | "matte"
