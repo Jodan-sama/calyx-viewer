@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import WigglyLines from "@/components/WigglyLines";
+import type { BagMaterial } from "@/lib/bagMaterial";
 
 // Lazy 3D previews — client-only (three.js)
 const SPINNER = (
@@ -89,14 +90,29 @@ function LandingBagPreview() {
   );
 }
 
+/* Multi-chrome material for the landing-page jar — gives the label a
+   colour-shifting chrome finish that's more eye-catching than the default
+   metallic when auto-rotating on the Outreach card. */
+const LANDING_JAR_MATERIAL: BagMaterial = {
+  finish: "multi-chrome",
+  metalness: 1.0,
+  roughness: 0.0,
+  bagColor: "#c4cdd8",
+  labelMetalness: 0.1,
+  labelRoughness: 0.55,
+  lighting: "studio",
+};
+
 /* 3D supplement-jar preview for the Outreach card. Same posture as the bag
    preview — non-interactive (parent <Link> swallows clicks), auto-rotating
-   for visual life. */
+   for visual life. Uses multi-chrome so the colour shift is visible while
+   the jar spins. */
 function LandingJarPreview() {
   return (
     <div className="w-full h-full">
       <OutreachJarViewer
         textureUrl={null}
+        material={LANDING_JAR_MATERIAL}
         interactive={false}
         autoRotate
         transparent

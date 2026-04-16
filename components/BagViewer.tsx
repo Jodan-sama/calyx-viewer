@@ -98,67 +98,66 @@ function SmokeBackground() {
     }
   });
   return (
-    <group ref={cloudsRef} position={[0, 0.2, -1.8]}>
-      <Clouds limit={200} material={THREE.MeshBasicMaterial}>
+    <group ref={cloudsRef} position={[0, 0.1, -2.2]}>
+      <Clouds limit={300} material={THREE.MeshBasicMaterial}>
         <Cloud
-          segments={40}
-          bounds={[5, 1.2, 2]}
-          volume={3}
-          color="#c8ccd6"
-          opacity={0.6}
-          fade={40}
-          position={[-1.6, 0.2, 0]}
-        />
-        <Cloud
-          segments={30}
-          bounds={[4, 1.0, 2]}
-          volume={2.4}
-          color="#b4b8c4"
+          segments={48}
+          bounds={[8, 2.0, 3.5]}
+          volume={4}
+          color="#eaecf2"
           opacity={0.55}
-          fade={40}
-          position={[1.8, 0.6, -0.4]}
+          fade={50}
+          position={[-2.4, 0.3, 0]}
         />
         <Cloud
-          segments={28}
-          bounds={[3, 0.9, 1.8]}
-          volume={2.0}
-          color="#9ea3b0"
-          opacity={0.7}
-          fade={40}
-          position={[0, -0.6, 0.3]}
+          segments={38}
+          bounds={[7, 1.6, 3]}
+          volume={3.2}
+          color="#e0e4ee"
+          opacity={0.5}
+          fade={50}
+          position={[2.6, 0.7, -0.6]}
+        />
+        <Cloud
+          segments={34}
+          bounds={[6, 1.4, 2.8]}
+          volume={2.8}
+          color="#d8dce8"
+          opacity={0.6}
+          fade={50}
+          position={[0, -0.5, 0.5]}
+        />
+        <Cloud
+          segments={26}
+          bounds={[5, 1.2, 2.5]}
+          volume={2.2}
+          color="#eff0f5"
+          opacity={0.4}
+          fade={50}
+          position={[-1.0, 1.0, -1.0]}
         />
       </Clouds>
     </group>
   );
 }
 
-// Backlight for the smoke scene — a soft white light placed behind the smoke
-// volume so the white clouds catch highlights and read as form instead of
-// flat fog against the light background.
-function SmokeBackLight() {
+// Lighting for the smoke scene — backlights behind the clouds for volume +
+// spotlights from the front/sides so the smoke is clearly visible and the
+// product catches strong highlights.
+function SmokeLights() {
   return (
     <>
-      <pointLight
-        position={[0, 0.8, -3.2]}
-        intensity={28}
-        color="#ffffff"
-        distance={10}
-        decay={2}
-      />
-      <pointLight
-        position={[-1.6, 0.4, -2.6]}
-        intensity={14}
-        color="#e8ecf8"
-        distance={8}
-        decay={2}
-      />
-      <pointLight
-        position={[1.6, 0.4, -2.6]}
-        intensity={14}
-        color="#f3ecf8"
-        distance={8}
-        decay={2}
-      />
+      {/* Backlights behind the smoke volume */}
+      <pointLight position={[0, 0.8, -3.8]} intensity={32} color="#ffffff" distance={12} decay={2} />
+      <pointLight position={[-2.0, 0.4, -3.0]} intensity={16} color="#e8ecf8" distance={10} decay={2} />
+      <pointLight position={[2.0, 0.4, -3.0]} intensity={16} color="#f3ecf8" distance={10} decay={2} />
+
+      {/* Front spotlights — illuminate the product and the near face of the smoke */}
+      <spotLight position={[-2.5, 2.5, 3.5]} intensity={40} color="#ffffff" angle={0.5} penumbra={0.8} distance={14} decay={2} castShadow />
+      <spotLight position={[2.5, 2.5, 3.5]} intensity={40} color="#ffffff" angle={0.5} penumbra={0.8} distance={14} decay={2} castShadow />
+
+      {/* Top-down fill so the smoke doesn't go flat */}
+      <spotLight position={[0, 4, 0]} intensity={20} color="#f0f2ff" angle={0.7} penumbra={1} distance={12} decay={2} />
     </>
   );
 }
@@ -530,7 +529,7 @@ export default function BagViewer({
 
         {isSmoke && (
           <>
-            <SmokeBackLight />
+            <SmokeLights />
             <SmokeBackground />
           </>
         )}
