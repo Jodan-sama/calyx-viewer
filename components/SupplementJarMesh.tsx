@@ -501,13 +501,14 @@ export default function SupplementJarMesh({
   }, [processedLabelScene, layer1Material]);
 
   // ── Autofit ───────────────────────────────────────────────────────────────
-  // Target height 1.8 units (smaller than the bag's ~2.5 so the jar doesn't
-  // feel zoomed in when it loads). Group Y pins the base to y=-1.28 so both
-  // models sit on the same floor.
+  // Target height 1.0 units — the jar is wider than it is tall, so even with
+  // a modest height it still takes up a lot of horizontal viewport. Previous
+  // 1.8 target loaded with the jar nearly filling the canvas. Group Y pins
+  // the base to y=-1.28 so both models sit on the same floor.
   const { targetScale, groupY } = useMemo(() => {
     const bbox = new THREE.Box3().setFromObject(processedBodyScene);
     const height = bbox.max.y - bbox.min.y;
-    const targetScale = height > 0 ? 1.8 / height : 1000;
+    const targetScale = height > 0 ? 1.0 / height : 1000;
     const groupY = -1.28 - bbox.min.y * targetScale;
     return { targetScale, groupY };
   }, [processedBodyScene]);
