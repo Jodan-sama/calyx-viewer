@@ -112,26 +112,6 @@ function RainbowLights() {
   );
 }
 
-function DimFloor() {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.28, 0]} receiveShadow>
-      <planeGeometry args={[40, 40]} />
-      <MeshReflectorMaterial
-        blur={[120, 40]}
-        resolution={2048}
-        mixBlur={0.6}
-        mixStrength={8.0}
-        roughness={0.05}
-        depthScale={0.8}
-        minDepthThreshold={0.2}
-        maxDepthThreshold={1.4}
-        color="#0a0a12"
-        metalness={0.9}
-        mirror={1}
-      />
-    </mesh>
-  );
-}
 
 // Scene-level auto-rotator (used when OrbitControls are off, e.g. in the
 // non-interactive landing/slot previews).
@@ -196,7 +176,7 @@ export default function OutreachJarViewer({
       layer3Metalness={0}
       layer3Roughness={0.5}
       envIntensityScale={dimScale}
-      floating={env === "default"}
+      floating={env !== "smoke"}
     />
   );
 
@@ -240,7 +220,6 @@ export default function OutreachJarViewer({
         {isDim && (
           <>
             <RainbowLights />
-            <DimFloor />
           </>
         )}
 

@@ -129,26 +129,6 @@ function RainbowLights() {
   );
 }
 
-function DimFloor() {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.28, 0]} receiveShadow>
-      <planeGeometry args={[40, 40]} />
-      <MeshReflectorMaterial
-        blur={[120, 40]}
-        resolution={2048}
-        mixBlur={0.6}
-        mixStrength={8.0}
-        roughness={0.05}
-        depthScale={0.8}
-        minDepthThreshold={0.2}
-        maxDepthThreshold={1.4}
-        color="#0a0a12"
-        metalness={0.9}
-        mirror={1}
-      />
-    </mesh>
-  );
-}
 
 
 // ── Scene-level auto-rotator (used when OrbitControls are disabled) ──────────
@@ -212,7 +192,7 @@ export default function OutreachBagViewer({
       }
       finish={mat.finish}
       envIntensityScale={dimScale}
-      floating={env === "default"}
+      floating={env !== "smoke"}
     />
   );
 
@@ -264,7 +244,6 @@ export default function OutreachBagViewer({
         {isDim && (
           <>
             <RainbowLights />
-            <DimFloor />
           </>
         )}
 

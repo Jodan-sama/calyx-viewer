@@ -186,30 +186,6 @@ function RainbowLights() {
   );
 }
 
-// Dark glass floor for the Dim scene — highly reflective so the rainbow
-// lights leave vivid coloured pools on the surface and the product gets
-// a strong cast reflection. Uses the same MeshReflectorMaterial as the
-// Smoke scene but with a much darker tint for the nightclub mood.
-function DimFloor() {
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.28, 0]} receiveShadow>
-      <planeGeometry args={[40, 40]} />
-      <MeshReflectorMaterial
-        blur={[120, 40]}
-        resolution={2048}
-        mixBlur={0.6}
-        mixStrength={8.0}
-        roughness={0.05}
-        depthScale={0.8}
-        minDepthThreshold={0.2}
-        maxDepthThreshold={1.4}
-        color="#0a0a12"
-        metalness={0.9}
-        mirror={1}
-      />
-    </mesh>
-  );
-}
 
 // Softly-polished floor used in the Smoke scene. Roughness 0.2 + metalness
 // 0.7 with mirror=1 and a moderate blur gives a strong but diffused cast
@@ -516,12 +492,7 @@ export default function BagViewer({
           </>
         )}
 
-        {isDim && (
-          <>
-            <RainbowLights />
-            <DimFloor />
-          </>
-        )}
+        {isDim && <RainbowLights />}
 
         {model === "bag" ? (
           <BagMesh
@@ -537,7 +508,7 @@ export default function BagViewer({
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
             finish={finish}
             envIntensityScale={dimScale}
-            floating={environment === "default"}
+            floating={environment !== "smoke"}
           />
         ) : (
           <SupplementJarMesh
@@ -570,7 +541,7 @@ export default function BagViewer({
             layer3Metalness={layer3Metalness}
             layer3Roughness={layer3Roughness}
             envIntensityScale={dimScale}
-            floating={environment === "default"}
+            floating={environment !== "smoke"}
           />
         )}
 
