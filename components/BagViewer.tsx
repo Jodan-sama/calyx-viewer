@@ -269,12 +269,15 @@ export default function BagViewer({
   const iMat = initialMaterial;
   const iEnv = initialEnvironment ?? "default";
   const iModel = initialModel ?? "bag";
-  const iActiveLayer = "layer1";
   const {
     model,
-    activeLayer,
     finish, metalness, roughness, bagColor,
     autoRotate, lighting, environment,
+    ambientIntensity, envIntensity, spotCount,
+    spot1Color, spot1Intensity, spot1Pos,
+    spot2Color, spot2Intensity, spot2Pos,
+    spot3Color, spot3Intensity, spot3Pos,
+    spot4Color, spot4Intensity, spot4Pos,
     labelMetalness, labelRoughness, labelVarnish, labelMaterial,
     labelMatFinish, labelMatMetalness, labelMatRoughness,
     layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
@@ -291,26 +294,15 @@ export default function BagViewer({
           "Supplement Jar": "jar",
         },
       },
-      // Jar + bag both ship with layered decals: Layer 1 drives the base
-      // material, Layers 2 & 3 are transparent artwork decals. The dropdown
-      // routes the Material Controls panel to whichever layer is being
-      // edited. Bag Layer 1 controls live in Surface; its Layer 2 edits the
-      // existing front/back label decals; Layer 3 adds a second stacked
-      // artwork layer.
-      activeLayer: {
-        label: "Active Layer",
-        value: iActiveLayer,
-        options: {
-          "Layer 1 — Material": "layer1",
-          "Layer 2": "layer2",
-          "Layer 3": "layer3",
-        },
-      },
+      // Every layer's controls are always visible now — no "active layer"
+      // switcher. Bag-only and jar-only folders still self-hide based on
+      // the Model dropdown above so the panel only shows knobs that can
+      // actually affect the active model.
     }, { collapsed: false }),
 
     Surface: folder({
-      // Applies to Layer 1 (base material) for both bag and jar, and is
-      // hidden when the user is editing Layer 2 or Layer 3.
+      // Layer 1 (base material). Always visible; custom metalness /
+      // roughness only appear when Finish is set to Custom.
       finish: {
         label: "Finish",
         value: iMat?.finish ?? "metallic",
@@ -324,35 +316,31 @@ export default function BagViewer({
           "Multi-Chrome": "multi-chrome",
           Custom: "custom",
         },
-        render: (get) => get("Model.activeLayer") === "layer1",
       },
       metalness: {
         label: "Metalness", value: iMat?.metalness ?? 0.92, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.activeLayer") === "layer1" &&
-          get("Surface.finish") === "custom",
+        render: (get) => get("Surface.finish") === "custom",
       },
       roughness: {
         label: "Roughness", value: iMat?.roughness ?? 0.08, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.activeLayer") === "layer1" &&
-          get("Surface.finish") === "custom",
+        render: (get) => get("Surface.finish") === "custom",
       },
       bagColor: {
         label: "Bag Color", value: iMat?.bagColor ?? "#c4cdd8",
-        render: (get) => get("Model.activeLayer") === "layer1",
       },
     }, { collapsed: false }),
 
     "Layer 2": folder({
       // Bag-only Layer 2 decal tuning (artwork-mode metalness / roughness).
       // Jar uses its own `layer2*` sliders below so each model's settings
-      // persist independently across model switches.
+      // persist independently across model switches. Model-specific
+      // conditionals remain (so jar controls stay hidden while editing a
+      // bag and vice versa), but there is no longer an "active layer"
+      // gate — Layer 2 controls are always present in the panel.
       labelMetalness: {
         label: "Metalness", value: iMat?.labelMetalness ?? 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.labelVarnish") &&
           !get("Layer 2.labelMaterial"),
       },
@@ -360,7 +348,6 @@ export default function BagViewer({
         label: "Roughness", value: iMat?.labelRoughness ?? 0.55, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.labelVarnish") &&
           !get("Layer 2.labelMaterial"),
       },
@@ -368,14 +355,11 @@ export default function BagViewer({
         label: "Varnish", value: iMat?.labelVarnish ?? false,
         render: (get) =>
           get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.labelMaterial"),
       },
       labelMaterial: {
         label: "Material", value: iMat?.labelMaterial ?? false,
-        render: (get) =>
-          get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2",
+        render: (get) => get("Model.model") === "bag",
       },
       // Per-layer Material finish (bag Layer 2). Shown only when the
       // Material checkbox above is on — picks what substance the artwork
@@ -394,14 +378,12 @@ export default function BagViewer({
         },
         render: (get) =>
           get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2" &&
           get("Layer 2.labelMaterial"),
       },
       labelMatMetalness: {
         label: "Layer Metalness", value: iMat?.labelMatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2" &&
           get("Layer 2.labelMaterial") &&
           get("Layer 2.labelMatFinish") === "custom",
       },
@@ -409,7 +391,6 @@ export default function BagViewer({
         label: "Layer Roughness", value: iMat?.labelMatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
-          get("Model.activeLayer") === "layer2" &&
           get("Layer 2.labelMaterial") &&
           get("Layer 2.labelMatFinish") === "custom",
       },
@@ -418,7 +399,6 @@ export default function BagViewer({
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.layer2Varnish") &&
           !get("Layer 2.layer2Material"),
       },
@@ -426,7 +406,6 @@ export default function BagViewer({
         label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.layer2Varnish") &&
           !get("Layer 2.layer2Material"),
       },
@@ -434,14 +413,11 @@ export default function BagViewer({
         label: "Varnish", value: false,
         render: (get) =>
           get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.layer2Material"),
       },
       layer2Material: {
         label: "Material", value: false,
-        render: (get) =>
-          get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2",
+        render: (get) => get("Model.model") === "jar",
       },
       // Per-layer Material finish (jar Layer 2).
       layer2MatFinish: {
@@ -458,14 +434,12 @@ export default function BagViewer({
         },
         render: (get) =>
           get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2" &&
           get("Layer 2.layer2Material"),
       },
       layer2MatMetalness: {
         label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2" &&
           get("Layer 2.layer2Material") &&
           get("Layer 2.layer2MatFinish") === "custom",
       },
@@ -473,41 +447,34 @@ export default function BagViewer({
         label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer2" &&
           get("Layer 2.layer2Material") &&
           get("Layer 2.layer2MatFinish") === "custom",
       },
     }, { collapsed: false }),
 
     "Layer 3": folder({
-      // Layer 3 controls — shared naming across bag and jar because both
-      // models consume the same set of sliders (metalness / roughness /
-      // varnish / material). Bag renders Layer 3 as a second stacked
-      // artwork decal on the front + back panels; jar renders it as a
-      // second stacked artwork layer around the cylindrical label.
+      // Layer 3 controls — shared between bag and jar. Always visible now
+      // that the active-layer gating is gone; sub-controls still fold
+      // away when they can't contribute (custom sliders only matter with
+      // Finish=Custom, etc.).
       layer3Metalness: {
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.activeLayer") === "layer3" &&
           !get("Layer 3.layer3Varnish") &&
           !get("Layer 3.layer3Material"),
       },
       layer3Roughness: {
         label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.activeLayer") === "layer3" &&
           !get("Layer 3.layer3Varnish") &&
           !get("Layer 3.layer3Material"),
       },
       layer3Varnish: {
         label: "Varnish", value: false,
-        render: (get) =>
-          get("Model.activeLayer") === "layer3" &&
-          !get("Layer 3.layer3Material"),
+        render: (get) => !get("Layer 3.layer3Material"),
       },
       layer3Material: {
         label: "Material", value: false,
-        render: (get) => get("Model.activeLayer") === "layer3",
       },
       // Per-layer Material finish — revealed when the Material checkbox
       // is on. Shared between bag and jar since Layer 3's render path is
@@ -524,21 +491,17 @@ export default function BagViewer({
           "Multi-Chrome": "multi-chrome",
           Custom: "custom",
         },
-        render: (get) =>
-          get("Model.activeLayer") === "layer3" &&
-          get("Layer 3.layer3Material"),
+        render: (get) => get("Layer 3.layer3Material"),
       },
       layer3MatMetalness: {
         label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.activeLayer") === "layer3" &&
           get("Layer 3.layer3Material") &&
           get("Layer 3.layer3MatFinish") === "custom",
       },
       layer3MatRoughness: {
         label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.activeLayer") === "layer3" &&
           get("Layer 3.layer3Material") &&
           get("Layer 3.layer3MatFinish") === "custom",
       },
@@ -550,7 +513,83 @@ export default function BagViewer({
         label: "Lighting", value: iMat?.lighting ?? "studio",
         options: { Studio: "studio", Warehouse: "warehouse", City: "city", Forest: "forest", Sunset: "sunset", Rave: "rave" },
       },
-    }, { collapsed: true }),
+    }, { collapsed: false }),
+
+    // ── Custom lighting ────────────────────────────────────────────────
+    // A tuning layer on top of the HDRI preset above. Ambient intensity
+    // overrides the hard-coded 0.45 fill; env intensity multiplies the
+    // HDRI contribution (0 = disable HDRI entirely). Below that, up to 4
+    // user-configured spotlights can be added — each with its own color,
+    // intensity, and XYZ position. Spotlights are additive, so they
+    // stack on top of whatever the HDRI + environment scene already
+    // contributes (Smoke's backlights, Dim's rainbow ring, etc.).
+    Lighting: folder({
+      ambientIntensity: {
+        label: "Ambient", value: 0.45, min: 0, max: 3, step: 0.01,
+      },
+      envIntensity: {
+        label: "HDRI Intensity", value: 1.0, min: 0, max: 3, step: 0.01,
+      },
+      spotCount: {
+        label: "Spotlights", value: 0, min: 0, max: 4, step: 1,
+      },
+      // Spotlight 1
+      spot1Color: {
+        label: "S1 Color", value: "#ffffff",
+        render: (get) => get("Lighting.spotCount") >= 1,
+      },
+      spot1Intensity: {
+        label: "S1 Intensity", value: 30, min: 0, max: 200, step: 1,
+        render: (get) => get("Lighting.spotCount") >= 1,
+      },
+      spot1Pos: {
+        label: "S1 Position", value: { x: -2.5, y: 2.5, z: 3.0 },
+        step: 0.1,
+        render: (get) => get("Lighting.spotCount") >= 1,
+      },
+      // Spotlight 2
+      spot2Color: {
+        label: "S2 Color", value: "#ffd7a8",
+        render: (get) => get("Lighting.spotCount") >= 2,
+      },
+      spot2Intensity: {
+        label: "S2 Intensity", value: 30, min: 0, max: 200, step: 1,
+        render: (get) => get("Lighting.spotCount") >= 2,
+      },
+      spot2Pos: {
+        label: "S2 Position", value: { x: 2.5, y: 2.5, z: 3.0 },
+        step: 0.1,
+        render: (get) => get("Lighting.spotCount") >= 2,
+      },
+      // Spotlight 3
+      spot3Color: {
+        label: "S3 Color", value: "#a8c9ff",
+        render: (get) => get("Lighting.spotCount") >= 3,
+      },
+      spot3Intensity: {
+        label: "S3 Intensity", value: 20, min: 0, max: 200, step: 1,
+        render: (get) => get("Lighting.spotCount") >= 3,
+      },
+      spot3Pos: {
+        label: "S3 Position", value: { x: 0, y: 1.0, z: -3.0 },
+        step: 0.1,
+        render: (get) => get("Lighting.spotCount") >= 3,
+      },
+      // Spotlight 4
+      spot4Color: {
+        label: "S4 Color", value: "#ffffff",
+        render: (get) => get("Lighting.spotCount") >= 4,
+      },
+      spot4Intensity: {
+        label: "S4 Intensity", value: 20, min: 0, max: 200, step: 1,
+        render: (get) => get("Lighting.spotCount") >= 4,
+      },
+      spot4Pos: {
+        label: "S4 Position", value: { x: 0, y: 4.0, z: 0 },
+        step: 0.1,
+        render: (get) => get("Lighting.spotCount") >= 4,
+      },
+    }, { collapsed: false }),
 
     Environment: folder({
       environment: {
@@ -560,10 +599,6 @@ export default function BagViewer({
       },
     }, { collapsed: false }),
   });
-
-  // Suppress unused warning — activeLayer only drives Leva visibility, not
-  // the render tree.
-  void activeLayer;
 
   // Emit current model so the page can adapt its upload buttons.
   useEffect(() => {
@@ -645,19 +680,23 @@ export default function BagViewer({
       style={{ width: "100%", height: "100%" }}
     >
       <color attach="background" args={[backgroundColor]} />
-      {!isRave && <ambientLight intensity={0.45 * dimScale} />}
+      {/* Ambient is user-controllable now. Rave preset still overrides
+          ambient to near-zero so the coloured point lights dominate; in
+          every other mode the Lighting → Ambient slider sets the value,
+          further scaled by Dim's 0.2 multiplier. */}
+      {!isRave && <ambientLight intensity={ambientIntensity * dimScale} />}
 
       <Suspense fallback={null}>
         {isRave ? (
           <>
             <RaveLights />
             {/* Turned way down — keeps colored lights dominant on reflections */}
-            <Environment preset="studio" background={false} environmentIntensity={0.22} />
+            <Environment preset="studio" background={false} environmentIntensity={0.22 * envIntensity} />
           </>
         ) : (
           <Environment
             preset={lighting as "studio"}
-            environmentIntensity={dimScale}
+            environmentIntensity={dimScale * envIntensity}
           />
         )}
 
@@ -669,6 +708,57 @@ export default function BagViewer({
         )}
 
         {isDim && <RainbowLights />}
+
+        {/* User-configured spotlights — additive on top of whatever the
+            HDRI + scene preset contribute. Rendered conditionally on the
+            spotCount slider so unused lights never hit the GPU. Each
+            spot uses fixed angle/penumbra/distance/decay so the user
+            doesn't have to tune those by hand; position, colour, and
+            intensity are the expressive knobs. */}
+        {spotCount >= 1 && (
+          <spotLight
+            position={[spot1Pos.x, spot1Pos.y, spot1Pos.z]}
+            intensity={spot1Intensity}
+            color={spot1Color}
+            angle={0.5}
+            penumbra={0.8}
+            distance={14}
+            decay={2}
+          />
+        )}
+        {spotCount >= 2 && (
+          <spotLight
+            position={[spot2Pos.x, spot2Pos.y, spot2Pos.z]}
+            intensity={spot2Intensity}
+            color={spot2Color}
+            angle={0.5}
+            penumbra={0.8}
+            distance={14}
+            decay={2}
+          />
+        )}
+        {spotCount >= 3 && (
+          <spotLight
+            position={[spot3Pos.x, spot3Pos.y, spot3Pos.z]}
+            intensity={spot3Intensity}
+            color={spot3Color}
+            angle={0.5}
+            penumbra={0.8}
+            distance={14}
+            decay={2}
+          />
+        )}
+        {spotCount >= 4 && (
+          <spotLight
+            position={[spot4Pos.x, spot4Pos.y, spot4Pos.z]}
+            intensity={spot4Intensity}
+            color={spot4Color}
+            angle={0.5}
+            penumbra={0.8}
+            distance={14}
+            decay={2}
+          />
+        )}
 
         {model === "bag" ? (
           <BagMesh

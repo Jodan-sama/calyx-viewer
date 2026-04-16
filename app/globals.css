@@ -25,11 +25,19 @@ html, body {
 /* Hide Leva's folder collapse chevrons (unique viewBox="0 0 9 5") and
    make folder titles behave as static section headers. Every folder in
    the preview panel is configured `collapsed: false`, so removing the
-   click-to-collapse affordance leaves controls permanently visible. */
+   click-to-collapse affordance leaves controls permanently visible even
+   if a stray click lands on the title row. */
 .calyx-leva svg[viewBox="0 0 9 5"] {
   display: none !important;
 }
 .calyx-leva div[style*="cursor: pointer"]:has(> svg[viewBox="0 0 9 5"]) {
   cursor: default !important;
   pointer-events: none !important;
+}
+/* Backup in case Leva swaps its chevron's markup in a future release:
+   any folder whose title row still ships a triangle indicator gets its
+   toggle disabled via the same pointer-events trick. */
+.calyx-leva [class*="collapse"],
+.calyx-leva [class*="chevron"] {
+  display: none !important;
 }
