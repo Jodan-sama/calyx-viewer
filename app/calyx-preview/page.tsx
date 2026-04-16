@@ -67,6 +67,10 @@ export default function CalyxPreview() {
   );
   const [backFileName, setBackFileName] = useState<string | null>(null);
 
+  // Active model — driven by BagViewer's Leva dropdown, surfaced here so the
+  // upload buttons can re-label themselves (Bag Front/Back → Layer 2/3 Art).
+  const [currentModel, setCurrentModel] = useState<"bag" | "jar">("bag");
+
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [magicImageUrl, setMagicImageUrl] = useState<string | null>(null);
   const [isMakingMagic, setIsMakingMagic] = useState(false);
@@ -214,7 +218,7 @@ export default function CalyxPreview() {
         {/* Left panel */}
         <aside className="flex-shrink-0 w-[200px] bg-white border-r border-[#e8ecf2] flex flex-col items-center pt-5 pb-6 gap-4 z-10 overflow-y-auto">
 
-          {/* Upload Bag Front */}
+          {/* Upload — slot A. Labels Bag Front for the bag, Layer 2 Art for the jar. */}
           <label
             className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
             style={{ background: "#0033A1" }}
@@ -225,7 +229,7 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Bag Front
+            {currentModel === "jar" ? "Layer 2 Art" : "Bag Front"}
             <input type="file" accept="image/*" className="hidden" onChange={handleFrontUpload} />
           </label>
 
@@ -235,7 +239,7 @@ export default function CalyxPreview() {
             </p>
           )}
 
-          {/* Upload Bag Back */}
+          {/* Upload — slot B. Labels Bag Back for the bag, Layer 3 Art for the jar. */}
           <label
             className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
             style={{ background: "#272724" }}
@@ -246,7 +250,7 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            Bag Back
+            {currentModel === "jar" ? "Layer 3 Art" : "Bag Back"}
             <input type="file" accept="image/*" className="hidden" onChange={handleBackUpload} />
           </label>
 
@@ -387,6 +391,7 @@ export default function CalyxPreview() {
             onScreenshot={setScreenshotUrl}
             captureRef={captureRef}
             onMaterialChange={handleMaterialChange}
+            onModelChange={setCurrentModel}
           />
           {/* Bottom hint sits over the canvas */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">

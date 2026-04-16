@@ -15,6 +15,8 @@ import * as THREE from "three";
 import BagMesh from "./BagMesh";
 import SupplementJarMesh from "./SupplementJarMesh";
 import {
+  DEFAULT_BACK_TEXTURE,
+  DEFAULT_FRONT_TEXTURE,
   FINISH_PRESETS,
   type BagFinish,
   type BagLighting,
@@ -238,6 +240,9 @@ interface BagViewerProps {
   onScreenshot?: (url: string) => void;
   captureRef?: React.MutableRefObject<(() => void) | null>;
   onMaterialChange?: (material: BagMaterial) => void;
+  /** Called when the user flips the Model dropdown between bag/jar so the
+   *  parent page can re-label upload buttons etc. */
+  onModelChange?: (model: "bag" | "jar") => void;
 }
 
 export default function BagViewer({
@@ -246,12 +251,16 @@ export default function BagViewer({
   onScreenshot,
   captureRef,
   onMaterialChange,
+  onModelChange,
 }: BagViewerProps) {
   const {
     model,
+    activeLayer,
     finish, metalness, roughness, bagColor,
     autoRotate, lighting, environment,
     labelMetalness, labelRoughness,
+    layer2Mode, layer2Metalness, layer2Roughness,
+    layer3Mode, layer3Metalness, layer3Roughness,
   } = useControls({
     Model: folder({
       model: {
@@ -262,9 +271,26 @@ export default function BagViewer({
           "Supplement Jar": "jar",
         },
       },
+      // Jar ships with three layers: Layer 1 drives the label's base
+      // material (Finish / Color / Metalness / Roughness), Layers 2 & 3 are
+      // transparent artwork/foil decals. The dropdown routes the Material
+      // Controls panel to whichever layer is being edited.
+      activeLayer: {
+        label: "Active Layer",
+        value: "layer1",
+        options: {
+          "Layer 1 — Material": "layer1",
+          "Layer 2": "layer2",
+          "Layer 3": "layer3",
+        },
+        render: (get) => get("Model.model") === "jar",
+      },
     }, { collapsed: false }),
 
     Surface: folder({
+      // For the bag these controls are always visible. For the jar they
+      // apply to Layer 1 (the label's base material) and are hidden when
+      // the user is editing Layer 2 or Layer 3.
       finish: {
         label: "Finish",
         value: "metallic",
@@ -277,21 +303,91 @@ export default function BagViewer({
           "Multi-Chrome": "multi-chrome",
           Custom: "custom",
         },
+        render: (get) =>
+          get("Model.model") === "bag" ||
+          get("Model.activeLayer") === "layer1",
       },
       metalness: {
         label: "Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
-        render: (get) => get("Surface.finish") === "custom",
+        render: (get) =>
+          (get("Model.model") === "bag" ||
+            get("Model.activeLayer") === "layer1") &&
+          get("Surface.finish") === "custom",
       },
       roughness: {
         label: "Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
-        render: (get) => get("Surface.finish") === "custom",
+        render: (get) =>
+          (get("Model.model") === "bag" ||
+            get("Model.activeLayer") === "layer1") &&
+          get("Surface.finish") === "custom",
       },
-      bagColor: { label: "Bag Color", value: "#c4cdd8" },
+      bagColor: {
+        label: "Bag Color", value: "#c4cdd8",
+        render: (get) =>
+          get("Model.model") === "bag" ||
+          get("Model.activeLayer") === "layer1",
+      },
     }, { collapsed: false }),
 
     Label: folder({
-      labelMetalness: { label: "Metalness", value: 0.1,  min: 0, max: 1, step: 0.01 },
-      labelRoughness: { label: "Roughness", value: 0.55, min: 0, max: 1, step: 0.01 },
+      // Bag-only: label decal metalness/roughness. The jar's layer decals
+      // have their own metalness/roughness inside the Layer folders.
+      labelMetalness: {
+        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
+        render: (get) => get("Model.model") === "bag",
+      },
+      labelRoughness: {
+        label: "Roughness", value: 0.55, min: 0, max: 1, step: 0.01,
+        render: (get) => get("Model.model") === "bag",
+      },
+    }, { collapsed: false }),
+
+    "Layer 2": folder({
+      layer2Mode: {
+        label: "Mode", value: "artwork",
+        options: { Artwork: "artwork", Foil: "foil" },
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2",
+      },
+      layer2Metalness: {
+        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.layer2Mode") === "artwork",
+      },
+      layer2Roughness: {
+        label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.layer2Mode") === "artwork",
+      },
+    }, { collapsed: false }),
+
+    "Layer 3": folder({
+      layer3Mode: {
+        label: "Mode", value: "artwork",
+        options: { Artwork: "artwork", Foil: "foil" },
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer3",
+      },
+      layer3Metalness: {
+        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer3" &&
+          get("Layer 3.layer3Mode") === "artwork",
+      },
+      layer3Roughness: {
+        label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer3" &&
+          get("Layer 3.layer3Mode") === "artwork",
+      },
     }, { collapsed: false }),
 
     Scene: folder({
@@ -310,6 +406,15 @@ export default function BagViewer({
       },
     }, { collapsed: false }),
   });
+
+  // Suppress unused warning — activeLayer only drives Leva visibility, not
+  // the render tree.
+  void activeLayer;
+
+  // Emit current model so the page can adapt its upload buttons.
+  useEffect(() => {
+    onModelChange?.(model as "bag" | "jar");
+  }, [model, onModelChange]);
 
   const preset =
     finish === "custom"
@@ -418,9 +523,31 @@ export default function BagViewer({
           />
         ) : (
           <SupplementJarMesh
-            textureUrl={textureUrl}
-            labelMetalness={labelMetalness}
-            labelRoughness={labelRoughness}
+            // Layer 1 — base label material. Identical to bag's Surface.
+            finish={finish as BagFinish}
+            labelColor={bagColor}
+            metalness={metalness}
+            roughness={roughness}
+            iridescence={preset?.iridescence ?? 0}
+            iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
+            iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
+            // Layer 2 / Layer 3 — transparent artwork/foil decals. The bag
+            // default textures are the pre-baked mylar artwork, which would
+            // look wrong scrunched around a cylinder, so we explicitly zero
+            // them out in jar mode — the decals stay clear until the user
+            // uploads something jar-appropriate.
+            layer2TextureUrl={
+              textureUrl === DEFAULT_FRONT_TEXTURE ? null : textureUrl
+            }
+            layer2Mode={layer2Mode as "artwork" | "foil"}
+            layer2Metalness={layer2Metalness}
+            layer2Roughness={layer2Roughness}
+            layer3TextureUrl={
+              backTextureUrl === DEFAULT_BACK_TEXTURE ? null : backTextureUrl ?? null
+            }
+            layer3Mode={layer3Mode as "artwork" | "foil"}
+            layer3Metalness={layer3Metalness}
+            layer3Roughness={layer3Roughness}
             envIntensityScale={dimScale}
           />
         )}
