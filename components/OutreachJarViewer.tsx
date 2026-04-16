@@ -11,10 +11,8 @@ import {
   MeshReflectorMaterial,
 } from "@react-three/drei";
 import * as THREE from "three";
-import BagMesh from "./BagMesh";
+import SupplementJarMesh from "./SupplementJarMesh";
 import {
-  DEFAULT_BACK_TEXTURE,
-  DEFAULT_FRONT_TEXTURE,
   DEFAULT_MATERIAL,
   FINISH_PRESETS,
   resolveSurface,
@@ -23,36 +21,21 @@ import {
 import type { SceneEnvironment } from "@/lib/types";
 
 interface Props {
-  /** Front-panel artwork. Null → default Calyx bag front. */
+  /** The label artwork to map onto the jar's body label (Layer 2). */
   textureUrl: string | null;
-  /** Back-panel artwork. Null → default Calyx bag back. */
+  /** Optional back-side artwork mapped to Layer 3. */
   backTextureUrl?: string | null;
-  /** Captured material config from BagViewer; null → DEFAULT_MATERIAL. */
+  /** Captured material config from the preview (label finish/colour). Reused
+   *  for the jar's Layer-1 surface so the saved jar matches what the user
+   *  saw in Calyx Preview. */
   material?: BagMaterial | null;
-  /** When false, OrbitControls are dropped and canvas ignores pointer events
-   *  so parent <Link>/<button> clicks bubble through. Defaults to true. */
   interactive?: boolean;
-  /** Auto-rotate the bag. Useful for non-interactive previews. */
   autoRotate?: boolean;
   /** Skip the solid scene background so the page underneath shows through —
-   *  used on the landing page so the wavy-line backdrop reads behind the bag. */
+   *  used on the landing page so the wavy-line backdrop reads behind the jar. */
   transparent?: boolean;
   /** Scene environment captured at save time. Null → "default". */
   environment?: SceneEnvironment | null;
-}
-
-// ── Rave lighting (mirrors BagViewer) ────────────────────────────────────────
-function RaveLights() {
-  return (
-    <>
-      <pointLight position={[-1.5, 1.5, 2.5]} intensity={60} color="#ff00cc" distance={15} decay={2} />
-      <pointLight position={[2, 0, 2.5]} intensity={45} color="#00ffee" distance={15} decay={2} />
-      <pointLight position={[0, 0.5, -2.5]} intensity={35} color="#aa00ff" distance={15} decay={2} />
-      <pointLight position={[0, 3, 1.5]} intensity={30} color="#ff44aa" distance={15} decay={2} />
-      <pointLight position={[2, -1.4, 2]} intensity={42} color="#22ff66" distance={15} decay={2} />
-      <ambientLight intensity={0.05} color="#ffffff" />
-    </>
-  );
 }
 
 // ── Smoke scene elements (mirrors BagViewer) ─────────────────────────────────
@@ -141,7 +124,8 @@ function AluminumShell() {
   );
 }
 
-// ── Scene-level auto-rotator (used when OrbitControls are disabled) ──────────
+// Scene-level auto-rotator (used when OrbitControls are off, e.g. in the
+// non-interactive landing/slot previews).
 function SpinningGroup({
   speed = 0.3,
   children,
@@ -157,11 +141,12 @@ function SpinningGroup({
 }
 
 /**
- * Lightweight BagViewer used inside Outreach slot thumbnails and the landing
- * card preview. No Leva panel, no screenshot capture — just a 3D preview
- * that faithfully plays back the material config captured at save time.
+ * Lightweight jar viewer used inside Outreach hero slots that were saved as
+ * `supplement-jar`. Mirrors OutreachBagViewer's shape so the slot layout and
+ * camera framing stay consistent across product types — only the underlying
+ * mesh changes.
  */
-export default function OutreachBagViewer({
+export default function OutreachJarViewer({
   textureUrl,
   backTextureUrl = null,
   material,
@@ -172,35 +157,35 @@ export default function OutreachBagViewer({
 }: Props) {
   const mat: BagMaterial = material ?? DEFAULT_MATERIAL;
   const surface = resolveSurface(mat);
-  const isRave = mat.lighting === "rave";
   const env = envProp ?? "default";
   const isSmoke = env === "smoke";
   const isDim = env === "dim";
   const dimScale = isDim ? 0.5 : 1;
-
   const iridescenceCfg =
     mat.finish !== "custom" ? FINISH_PRESETS[mat.finish] : null;
 
-  // Fall back to the branded default artwork on both sides so the playback
-  // viewer never renders with the procedural placeholder.
-  const resolvedFront = textureUrl ?? DEFAULT_FRONT_TEXTURE;
-  const resolvedBack = backTextureUrl ?? DEFAULT_BACK_TEXTURE;
-
-  const bag = (
-    <BagMesh
-      textureUrl={resolvedFront}
-      backTextureUrl={resolvedBack}
+  const jar = (
+    <SupplementJarMesh
+      finish={mat.finish}
+      labelColor={mat.bagColor}
       metalness={surface.metalness}
       roughness={surface.roughness}
-      color={mat.bagColor}
-      labelMetalness={mat.labelMetalness}
-      labelRoughness={mat.labelRoughness}
       iridescence={iridescenceCfg?.iridescence ?? 0}
       iridescenceIOR={iridescenceCfg?.iridescenceIOR ?? 1.5}
       iridescenceThicknessRange={
         iridescenceCfg?.iridescenceThicknessRange ?? [100, 800]
       }
-      finish={mat.finish}
+      // The saved label image lives on Layer 2 (front artwork) of the jar.
+      // Layer 3 is the back-side artwork; both default to clear if absent so
+      // the bare label finish shows through.
+      layer2TextureUrl={textureUrl}
+      layer2Mode="artwork"
+      layer2Metalness={0}
+      layer2Roughness={0.5}
+      layer3TextureUrl={backTextureUrl}
+      layer3Mode="artwork"
+      layer3Metalness={0}
+      layer3Roughness={0.5}
       envIntensityScale={dimScale}
       floating={env === "default"}
     />
@@ -217,32 +202,24 @@ export default function OutreachBagViewer({
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: isRave ? 1.1 : 1.4,
+        toneMappingExposure: 1.4,
       }}
       shadows
       dpr={[1, 2]}
       style={{
         width: "100%",
         height: "100%",
-        // Let clicks pass through to the parent (e.g. landing Link card)
         pointerEvents: interactive ? "auto" : "none",
       }}
     >
       {!transparent && <color attach="background" args={["#eef1f8"]} />}
-      {!isRave && <ambientLight intensity={0.45 * dimScale} />}
+      <ambientLight intensity={0.45 * dimScale} />
 
       <Suspense fallback={null}>
-        {isRave ? (
-          <>
-            <RaveLights />
-            <Environment preset="studio" background={false} environmentIntensity={0.22} />
-          </>
-        ) : (
-          <Environment
-            preset={mat.lighting as "studio"}
-            environmentIntensity={dimScale}
-          />
-        )}
+        <Environment
+          preset={mat.lighting as "studio"}
+          environmentIntensity={dimScale}
+        />
 
         {isSmoke && (
           <>
@@ -260,9 +237,9 @@ export default function OutreachBagViewer({
         )}
 
         {autoRotate && !interactive ? (
-          <SpinningGroup speed={0.35}>{bag}</SpinningGroup>
+          <SpinningGroup speed={0.35}>{jar}</SpinningGroup>
         ) : (
-          bag
+          jar
         )}
 
         {isSmoke ? (
@@ -270,7 +247,7 @@ export default function OutreachBagViewer({
         ) : (
           <ContactShadows
             position={[0, -1.28, 0]}
-            opacity={isRave ? 0.8 : 0.5}
+            opacity={0.5}
             scale={5}
             blur={2.5}
             far={2}

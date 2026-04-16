@@ -55,3 +55,25 @@ export async function uploadLabel(
   const { data } = supabase.storage.from(LABEL_BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }
+
+/** Upload a brand logo. Lives in the same `labels` bucket but under a
+ *  `logos/<slug>/` prefix so it doesn't collide with product label uploads.
+ *  Returns the public URL. */
+export async function uploadBrandLogo(
+  file: Blob,
+  brandSlug: string,
+  filename: string
+): Promise<string> {
+  const supabase = getSupabase();
+  const path = `logos/${brandSlug}/${Date.now()}-${filename}`;
+  const { error } = await supabase.storage
+    .from(LABEL_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type || "image/png",
+    });
+  if (error) throw error;
+  const { data } = supabase.storage.from(LABEL_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}

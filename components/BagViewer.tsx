@@ -164,22 +164,49 @@ function SmokeBackLight() {
 }
 
 // ── Dim scene lighting + shell ───────────────────────────────────────────────
-// Four warm cream point lights placed close to the bag on each side so the
-// dim environment still has shape-defining highlights even after the HDRI and
-// ambient are scaled down to 50%. Intensities are modest — the goal is a
-// moody, candle-lit read, not a studio bounce.
+// Eight warm cream point lights wrapped around the bag — four primary rim
+// lights on the cardinal axes plus four softer corner fills — so the dim
+// environment still has plenty of shape-defining highlights even after the
+// HDRI and ambient are scaled down to 50%. Intensities stay modest; the goal
+// is a moody candle-lit read, not a studio bounce.
 function DimRimLights() {
   return (
     <>
-      {/* Top — warm cream key */}
+      {/* Cardinal rims — top, bottom, left, right */}
       <pointLight position={[0, 1.6, 0.8]} intensity={14} color="#fff0d4" distance={8} decay={2} />
-      {/* Bottom — slightly warmer underfill */}
       <pointLight position={[0, -1.4, 0.8]} intensity={10} color="#fde9c4" distance={8} decay={2} />
-      {/* Left rim */}
       <pointLight position={[-1.9, 0, 0.8]} intensity={12} color="#fff3d8" distance={8} decay={2} />
-      {/* Right rim */}
       <pointLight position={[1.9, 0, 0.8]} intensity={12} color="#fcebc0" distance={8} decay={2} />
+
+      {/* Corner fills — softer, slightly farther out so the rims dominate */}
+      <pointLight position={[-1.4, 1.2, 1.4]} intensity={9} color="#fff5dc" distance={8} decay={2} />
+      <pointLight position={[1.4, 1.2, 1.4]} intensity={9} color="#fdeec8" distance={8} decay={2} />
+      <pointLight position={[-1.4, -1.0, 1.4]} intensity={8} color="#ffeed0" distance={8} decay={2} />
+      <pointLight position={[1.4, -1.0, 1.4]} intensity={8} color="#ffe7c0" distance={8} decay={2} />
+
+      {/* Back fills — warm cream coming from behind the bag, gives the
+          aluminum shell something to bounce so silhouettes don't go dead. */}
+      <pointLight position={[-1.2, 0.4, -2.2]} intensity={10} color="#ffe9c4" distance={9} decay={2} />
+      <pointLight position={[1.2, 0.4, -2.2]} intensity={10} color="#fff0d4" distance={9} decay={2} />
     </>
+  );
+}
+
+// Soft cream ground plane for the Dim scene. Sits at the same y as the
+// contact-shadow plane so the bag/jar look like they're floating just above
+// it, matching the Default scene's grounding. Roughness is high so the plane
+// reads as a soft surface rather than a polished floor — the Smoke scene is
+// where the mirror floor lives.
+function DimFloor() {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.28, 0]} receiveShadow>
+      <planeGeometry args={[40, 40]} />
+      <meshStandardMaterial
+        color="#f6ecd6"
+        metalness={0.05}
+        roughness={0.9}
+      />
+    </mesh>
   );
 }
 
@@ -243,6 +270,9 @@ interface BagViewerProps {
   /** Called when the user flips the Model dropdown between bag/jar so the
    *  parent page can re-label upload buttons etc. */
   onModelChange?: (model: "bag" | "jar") => void;
+  /** Called when the user changes the Environment dropdown (default/smoke/dim)
+   *  so the parent can include the current environment in saves. */
+  onEnvironmentChange?: (env: "default" | "smoke" | "dim") => void;
 }
 
 export default function BagViewer({
@@ -252,6 +282,7 @@ export default function BagViewer({
   captureRef,
   onMaterialChange,
   onModelChange,
+  onEnvironmentChange,
 }: BagViewerProps) {
   const {
     model,
@@ -416,6 +447,11 @@ export default function BagViewer({
     onModelChange?.(model as "bag" | "jar");
   }, [model, onModelChange]);
 
+  // Emit current environment so the page can include it in saves.
+  useEffect(() => {
+    onEnvironmentChange?.(environment as "default" | "smoke" | "dim");
+  }, [environment, onEnvironmentChange]);
+
   const preset =
     finish === "custom"
       ? null
@@ -503,6 +539,7 @@ export default function BagViewer({
           <>
             <DimRimLights />
             <AluminumShell />
+            <DimFloor />
           </>
         )}
 
@@ -520,6 +557,7 @@ export default function BagViewer({
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
             finish={finish}
             envIntensityScale={dimScale}
+            floating={environment === "default"}
           />
         ) : (
           <SupplementJarMesh
@@ -549,6 +587,7 @@ export default function BagViewer({
             layer3Metalness={layer3Metalness}
             layer3Roughness={layer3Roughness}
             envIntensityScale={dimScale}
+            floating={environment === "default"}
           />
         )}
 

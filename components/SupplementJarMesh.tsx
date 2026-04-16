@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
+import { useFrame } from "@react-three/fiber";
+import {
+  mergeGeometries,
+  mergeVertices,
+} from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { BagFinish } from "@/lib/bagMaterial";
 
 // ── Assets ───────────────────────────────────────────────────────────────────
@@ -50,6 +55,10 @@ interface SupplementJarMeshProps {
 
   /** Scene-level env dim (same prop as BagMesh). 1 = default. */
   envIntensityScale?: number;
+  /** Whether to float the jar above the ground. When false (e.g. in the Smoke
+   *  scene with a reflective floor), the jar sits flush on the floor with no
+   *  oscillation, so the cast reflection lines up cleanly with its base. */
+  floating?: boolean;
 }
 
 // ── HSV → RGB helper for holographic texture (duplicated from BagMesh) ──────
@@ -131,25 +140,59 @@ async function loadLabelTexture(
 }
 
 // ── Cylindrical UV reprojection ─────────────────────────────────────────────
-// Clones + de-indexes the source geometry, computes u = atan2(z,x)/2π around
-// the Y axis and v = normalised height against the supplied yMin/yMax, then
+// Clones + de-indexes the source geometry, computes u = (seamAngle -
+// atan2(z,x))/(2π) around the Y axis (the seamAngle parameter rotates the
+// u=0/u=1 boundary so it can be hidden inside a physical gap in the label
+// geometry) and v = normalised height against the supplied yMin/yMax. Then
 // bumps low-u vertices on seam-spanning triangles by +1 so RepeatWrapping on
 // the texture gives a seamless wrap.
+//
+// The source geometry is expected to already have smooth, welded normals
+// (computed on the merged label geometry before this call). After toNonIndexed
+// duplicates each vertex per triangle, we transfer those smooth normals back
+// via a position hash so the seam-bumping doesn't reintroduce flat shading.
 function cylindricalUVs(
   src: THREE.BufferGeometry,
   yMin: number,
-  yMax: number
+  yMax: number,
+  seamAngle = Math.PI
 ): THREE.BufferGeometry {
+  // Cache the welded normals before we de-index — keyed by quantised position.
+  // Precision needs to be tighter than the geometry's smallest feature; the
+  // label GLB ships in 0.002-unit-wide native space, so 4 decimals would
+  // bucket every vertex into ~3 hash slots. 8 decimals covers anything down
+  // to 1e-8, which is well below float round-trip error for these positions.
+  const PRECISION = 8;
+  const posKey = (x: number, y: number, z: number) =>
+    `${x.toFixed(PRECISION)}|${y.toFixed(PRECISION)}|${z.toFixed(PRECISION)}`;
+  const normalMap = new Map<string, [number, number, number]>();
+  const srcPos = src.attributes.position as THREE.BufferAttribute;
+  const srcNorm = src.attributes.normal as THREE.BufferAttribute | undefined;
+  if (srcNorm) {
+    for (let i = 0; i < srcPos.count; i++) {
+      normalMap.set(
+        posKey(srcPos.getX(i), srcPos.getY(i), srcPos.getZ(i)),
+        [srcNorm.getX(i), srcNorm.getY(i), srcNorm.getZ(i)]
+      );
+    }
+  }
+
   const geo = src.clone().toNonIndexed();
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const yRange = yMax - yMin || 1;
 
   const uv = new Float32Array(pos.count * 2);
+  const TWO_PI = Math.PI * 2;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    uv[i * 2] = Math.atan2(z, x) / (Math.PI * 2) + 0.5;
+    // u shifts so the seam (u=0/u=1) lands at seamAngle. The minus sign
+    // matches viewing the label from outside the cylinder — without it,
+    // text reads mirrored ("CALYX" → "XYLAC").
+    let u = (seamAngle - Math.atan2(z, x)) / TWO_PI;
+    u = u - Math.floor(u); // wrap into [0, 1)
+    uv[i * 2] = u;
     uv[i * 2 + 1] = (y - yMin) / yRange;
   }
 
@@ -165,14 +208,28 @@ function cylindricalUVs(
   }
 
   geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  geo.computeVertexNormals();
-  return geo;
-}
 
-interface DecalGeo {
-  geometry: THREE.BufferGeometry;
-  /** World matrix baked in so the decal mesh renders at the group level. */
-  matrix: THREE.Matrix4;
+  // Restore smooth normals from the welded source via position hash. If we
+  // fall through to computeVertexNormals() the per-triangle averaging on a
+  // non-indexed geometry produces flat shading at every primitive boundary,
+  // which is exactly the dark-stripe artefact we're trying to avoid.
+  if (normalMap.size > 0) {
+    const newNormals = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const k = posKey(pos.getX(i), pos.getY(i), pos.getZ(i));
+      const n = normalMap.get(k);
+      if (n) {
+        newNormals[i * 3] = n[0];
+        newNormals[i * 3 + 1] = n[1];
+        newNormals[i * 3 + 2] = n[2];
+      }
+    }
+    geo.setAttribute("normal", new THREE.BufferAttribute(newNormals, 3));
+  } else {
+    geo.computeVertexNormals();
+  }
+
+  return geo;
 }
 
 export default function SupplementJarMesh({
@@ -192,6 +249,7 @@ export default function SupplementJarMesh({
   layer3Metalness,
   layer3Roughness,
   envIntensityScale = 1,
+  floating = true,
 }: SupplementJarMeshProps) {
   const { scene: bodyScene } = useGLTF(JAR_BODY_GLB) as { scene: THREE.Group };
   const { scene: labelScene } = useGLTF(JAR_LABEL_GLB) as { scene: THREE.Group };
@@ -379,6 +437,79 @@ export default function SupplementJarMesh({
   const layer2Mat = useMemo(() => makeDecalMat(-4), []);
   const layer3Mat = useMemo(() => makeDecalMat(-8), []);
 
+  // Layer 2 — Foil-with-artwork composite. When the user picks the "foil"
+  // mode for Layer 2 AND has uploaded artwork, we render two stacked meshes:
+  //   1. A holographic-foil chrome material whose coverage is masked by the
+  //      artwork's alpha — i.e., the foil only appears where the artwork is
+  //      solid, leaving the rest of the cylinder showing the Layer 1 finish.
+  //   2. The artwork itself at 50% opacity on top, so the underlying foil
+  //      tints through and reads as a "foiled artwork" rather than flat ink.
+  // The materials below intentionally don't clobber gl_FragColor.a in their
+  // shader injection, which lets the standard alphaMap chain mask the foil.
+  const layer2FoilMaskedMat = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      metalness: 1.0,
+      roughness: 0.0,
+      envMapIntensity: FOIL_ENV_BASE,
+      side: THREE.FrontSide,
+      transparent: true,
+      alphaTest: 0.01,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <worldpos_vertex>",
+        `#include <worldpos_vertex>
+        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+      );
+      shader.fragmentShader =
+        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <dithering_fragment>",
+        `#include <dithering_fragment>
+        vec3 wN = normalize(vNormal);
+        vec3 vd = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
+        float scale = 28.0;
+        vec2 cell = fract(vec2(vWorldPos.x, vWorldPos.y) * scale) - 0.5;
+        float dist = length(cell);
+        float circle = 1.0 - smoothstep(0.28, 0.42, dist);
+        vec2 cellId = floor(vec2(vWorldPos.x, vWorldPos.y) * scale);
+        float cellOffset = fract(sin(cellId.x * 127.1 + cellId.y * 311.7) * 0.12);
+        float cellHue = fract(ndv * 1.8 + wN.x * 0.5 + wN.y * 0.3 + cellOffset);
+        vec3 rainbow = clamp(abs(mod(cellHue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        vec3 chrome = vec3(0.85, 0.90, 0.95);
+        vec3 dotColor = mix(chrome, rainbow, 0.55);
+        vec3 foilColor = mix(chrome, dotColor, circle * 0.80);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, foilColor, 0.85);
+        // gl_FragColor.a is intentionally NOT clobbered here — the standard
+        // alphaMap chain has already attenuated it by the artwork's alpha,
+        // and that masking is exactly what we want for the foil cutout.`
+      );
+    };
+    return mat;
+  }, []);
+
+  const layer2ArtworkOverlayMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        metalness: 0,
+        roughness: 0.5,
+        envMapIntensity: DECAL_ENV_BASE,
+        transparent: true,
+        opacity: 0.5,
+        alphaTest: 0.01,
+        side: THREE.FrontSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -8,
+        polygonOffsetUnits: -8,
+      }),
+    []
+  );
+
   const [layer2Tex, setLayer2Tex] = useState<THREE.Texture | null>(null);
   const [layer3Tex, setLayer3Tex] = useState<THREE.Texture | null>(null);
 
@@ -414,6 +545,28 @@ export default function SupplementJarMesh({
     layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer2Mat.needsUpdate = true;
   }, [layer2Tex, layer2Mode, layer2Metalness, layer2Roughness, envIntensityScale, layer2Mat]);
+
+  // Layer 2 foil-with-artwork pair — only active when the user picks "foil"
+  // for Layer 2 AND has uploaded artwork. The artwork is bound as `map` on
+  // the foil material so its .a channel attenuates diffuseColor.a (three's
+  // built-in `alphaMap` samples .g and would misread our RGBA artwork).
+  // The shader replaces gl_FragColor.rgb with the chrome-foil pattern but
+  // leaves gl_FragColor.a alone, which is what gives us the cutout. The
+  // overlay material renders the artwork at 50% opacity on top.
+  useEffect(() => {
+    layer2FoilMaskedMat.map = layer2Tex;
+    layer2FoilMaskedMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
+    layer2FoilMaskedMat.needsUpdate = true;
+
+    layer2ArtworkOverlayMat.map = layer2Tex;
+    layer2ArtworkOverlayMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
+    layer2ArtworkOverlayMat.needsUpdate = true;
+  }, [
+    layer2Tex,
+    envIntensityScale,
+    layer2FoilMaskedMat,
+    layer2ArtworkOverlayMat,
+  ]);
 
   useEffect(() => {
     layer3Mat.map = layer3Tex;
@@ -456,94 +609,186 @@ export default function SupplementJarMesh({
     });
   }, [processedBodyScene, plasticMat]);
 
-  // Label: clone the label-only glb and build cylindrical-UV decal geometries
-  // from each primitive for layers 2/3 to use. The cloned label scene is
-  // itself rendered as Layer 1 with whatever material comes out of the
-  // Surface controls.
-  const { processedLabelScene, decalGeos } = useMemo(() => {
+  // Label: clone the label-only glb, bake each primitive's world matrix into
+  // its geometry, merge them all into one BufferGeometry, weld vertices that
+  // share a position so smooth-normal computation can cross primitive
+  // boundaries (without this you get hard creases at every primitive seam,
+  // which read as dark vertical stripes under reflective materials), then
+  // reproject UVs onto a cylinder. The final geometry is shared by Layer 1
+  // (base material), Layer 2 (artwork/foil), and Layer 3 (artwork/foil).
+  const labelGeo = useMemo(() => {
     const clone = labelScene.clone(true);
-    const labelMeshes: THREE.Mesh[] = [];
+    clone.updateMatrixWorld(true);
+
+    const collected: THREE.BufferGeometry[] = [];
     clone.traverse((obj) => {
       const m = obj as THREE.Mesh;
-      if (!m.isMesh || !m.geometry) return;
-      labelMeshes.push(m);
-      m.castShadow = true;
-      m.receiveShadow = true;
+      if (!m.isMesh || !m.geometry?.attributes?.position) return;
+      // Strip to position-only and normalise to non-indexed so mergeGeometries
+      // never trips on attribute mismatches or mixed indexed/non-indexed
+      // primitives (it returns null silently if the indexed status differs
+      // between inputs).
+      const src = m.geometry;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", src.attributes.position.clone());
+      if (src.index) g.setIndex(src.index.clone());
+      g.applyMatrix4(m.matrixWorld);
+      collected.push(g.toNonIndexed());
     });
 
-    let yMinL = Infinity;
-    let yMaxL = -Infinity;
-    for (const m of labelMeshes) {
-      const pos = m.geometry.attributes.position as THREE.BufferAttribute;
-      for (let i = 0; i < pos.count; i++) {
-        const y = pos.getY(i);
-        if (y < yMinL) yMinL = y;
-        if (y > yMaxL) yMaxL = y;
+    if (collected.length === 0) return new THREE.BufferGeometry();
+
+    const merged =
+      collected.length === 1
+        ? collected[0]
+        : mergeGeometries(collected, false);
+    if (!merged) return new THREE.BufferGeometry();
+
+    // Weld coincident vertices using a tolerance scaled to the label's actual
+    // size — the label GLB is in tiny native units (~0.002 wide), so the
+    // default 1e-4 would weld together vertices that are an entire edge
+    // apart. Use 0.1% of the bounding box diagonal as the weld threshold.
+    merged.computeBoundingBox();
+    const bb = merged.boundingBox!;
+    const diag = bb.min.distanceTo(bb.max);
+    const weldTol = Math.max(diag * 0.001, 1e-7);
+
+    const welded = mergeVertices(merged, weldTol);
+    welded.computeVertexNormals();
+
+    // Compute Y extent for the cylindrical V coordinate, and the largest
+    // angular gap around the cylinder so the texture seam can hide inside
+    // the physical opening on the back of the label. The label GLB ships
+    // with a deliberate gap in its wrap; we bin angles into discrete buckets,
+    // find the widest empty arc, and seat the seam at its midpoint.
+    const pos = welded.attributes.position as THREE.BufferAttribute;
+    let yMin = Infinity;
+    let yMax = -Infinity;
+
+    const ANGLE_BINS = 720; // 0.5° resolution
+    const occupied = new Uint8Array(ANGLE_BINS);
+    const TWO_PI = Math.PI * 2;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+      // Skip vertices on (or extremely near) the cylinder axis where atan2
+      // is numerically unstable and doesn't reflect a real surface angle.
+      if (x * x + z * z < 1e-14) continue;
+      let a = Math.atan2(z, x); // [-π, π]
+      if (a < 0) a += TWO_PI; // [0, 2π)
+      const bin = Math.floor((a / TWO_PI) * ANGLE_BINS) % ANGLE_BINS;
+      occupied[bin] = 1;
+    }
+
+    // Walk the ring twice so we find the longest empty run even if it
+    // straddles the bin-0 boundary.
+    let bestStart = 0;
+    let bestLen = 0;
+    let curStart = 0;
+    let curLen = 0;
+    for (let i = 0; i < ANGLE_BINS * 2; i++) {
+      const bin = i % ANGLE_BINS;
+      if (occupied[bin] === 0) {
+        if (curLen === 0) curStart = i;
+        curLen++;
+        if (curLen > bestLen) {
+          bestLen = curLen;
+          bestStart = curStart;
+        }
+      } else {
+        curLen = 0;
       }
     }
 
-    clone.updateMatrixWorld(true);
-    const decalGeos: DecalGeo[] = labelMeshes.map((src) => ({
-      geometry: cylindricalUVs(src.geometry, yMinL, yMaxL),
-      matrix: src.matrixWorld.clone(),
-    }));
+    // Default to π (back of jar) if the wrap is fully closed; otherwise put
+    // the seam in the middle of the largest empty arc.
+    let seamAngle = Math.PI;
+    if (bestLen > 0 && bestLen < ANGLE_BINS) {
+      const midBin = (bestStart + bestLen / 2) % ANGLE_BINS;
+      seamAngle = (midBin / ANGLE_BINS) * TWO_PI;
+    }
 
-    return { processedLabelScene: clone, decalGeos };
+    return cylindricalUVs(welded, yMin, yMax, seamAngle);
   }, [labelScene]);
-
-  // Apply the current Layer 1 material to every primitive of the label scene.
-  useEffect(() => {
-    processedLabelScene.traverse((obj) => {
-      const m = obj as THREE.Mesh;
-      if (!m.isMesh) return;
-      m.material = layer1Material;
-    });
-  }, [processedLabelScene, layer1Material]);
 
   // ── Autofit ───────────────────────────────────────────────────────────────
   // Target height 1.0 units — the jar is wider than it is tall, so even with
   // a modest height it still takes up a lot of horizontal viewport. Previous
-  // 1.8 target loaded with the jar nearly filling the canvas. Group Y pins
-  // the base to y=-1.28 so both models sit on the same floor.
-  const { targetScale, groupY } = useMemo(() => {
+  // 1.8 target loaded with the jar nearly filling the canvas. baseGroupY pins
+  // the base above the ground plane: when `floating`, ~0.18 above y=-1.28 so
+  // the jar floats the same distance above the contact shadow as the bag
+  // does in the Default scene; when not floating (Smoke), it sits flush on
+  // the reflective floor (y=-1.265) so the cast reflection joins seamlessly
+  // at the base. The float animation oscillates ±0.02 around baseGroupY only
+  // when floating.
+  const FLOAT_GAP = 0.18;
+  const FLOOR_Y = floating ? -1.28 : -1.265;
+  const { targetScale, baseGroupY } = useMemo(() => {
     const bbox = new THREE.Box3().setFromObject(processedBodyScene);
     const height = bbox.max.y - bbox.min.y;
     const targetScale = height > 0 ? 1.0 / height : 1000;
-    const groupY = -1.28 - bbox.min.y * targetScale;
-    return { targetScale, groupY };
-  }, [processedBodyScene]);
+    const baseGroupY = FLOOR_Y + (floating ? FLOAT_GAP : 0) - bbox.min.y * targetScale;
+    return { targetScale, baseGroupY };
+  }, [processedBodyScene, floating, FLOOR_Y]);
+
+  // Gentle hover — same speed/amplitude as the bag's float animation in
+  // BagMesh, so swapping models doesn't change the scene's overall motion.
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    groupRef.current.position.y = floating
+      ? baseGroupY + Math.sin(clock.elapsedTime * 0.6) * 0.02
+      : baseGroupY;
+  });
 
   return (
     <group
+      ref={groupRef}
       scale={[targetScale, targetScale, targetScale]}
-      position={[0, groupY, 0]}
+      position={[0, baseGroupY, 0]}
     >
       <primitive object={processedBodyScene} />
-      <primitive object={processedLabelScene} />
 
-      {layer2Tex &&
-        decalGeos.map((d, i) => (
+      {/* Layer 1 — base label material (mylar / foil / chrome / custom). */}
+      <mesh
+        geometry={labelGeo}
+        material={layer1Material}
+        castShadow
+        receiveShadow
+      />
+
+      {/* Layer 2 — three branches:
+           • Foil mode + artwork uploaded: foil masked by artwork alpha (only
+             the artwork's solid pixels show as foil) plus the artwork itself
+             at 50% opacity on top.
+           • Artwork mode + artwork uploaded: standard transparent decal.
+           • Foil mode without artwork: nothing — the chrome would otherwise
+             cover the whole label and defeat the point of Layer 1. */}
+      {layer2Tex && layer2Mode === "foil" && (
+        <>
           <mesh
-            key={`l2-${i}`}
-            geometry={d.geometry}
-            matrix={d.matrix}
-            matrixAutoUpdate={false}
-            material={layer2Mat}
+            geometry={labelGeo}
+            material={layer2FoilMaskedMat}
             renderOrder={1}
           />
-        ))}
-
-      {layer3Tex &&
-        decalGeos.map((d, i) => (
           <mesh
-            key={`l3-${i}`}
-            geometry={d.geometry}
-            matrix={d.matrix}
-            matrixAutoUpdate={false}
-            material={layer3Mat}
+            geometry={labelGeo}
+            material={layer2ArtworkOverlayMat}
             renderOrder={2}
           />
-        ))}
+        </>
+      )}
+      {layer2Tex && layer2Mode === "artwork" && (
+        <mesh geometry={labelGeo} material={layer2Mat} renderOrder={1} />
+      )}
+
+      {/* Layer 3 — standard transparent decal in either mode. */}
+      {layer3Tex && (
+        <mesh geometry={labelGeo} material={layer3Mat} renderOrder={3} />
+      )}
     </group>
   );
 }

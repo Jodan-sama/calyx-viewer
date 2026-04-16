@@ -7,8 +7,9 @@ import {
   listBrands,
   listSetsForBrand,
   updateBrandColors,
+  updateBrandLogo,
 } from "@/lib/brands";
-import { supabaseConfigured } from "@/lib/supabase";
+import { supabaseConfigured, uploadBrandLogo } from "@/lib/supabase";
 import type { Brand, ProductSet } from "@/lib/types";
 import {
   brandThemeVars,
@@ -133,6 +134,45 @@ export default function Outreach() {
     [selectedBrand]
   );
 
+  // ── Brand logo upload ─────────────────────────────────────────────────────
+  const [logoUploading, setLogoUploading] = useState(false);
+
+  const handleLogoUpload = useCallback(
+    async (file: File) => {
+      if (!selectedBrand) return;
+      const brandId = selectedBrand.id;
+      setLogoUploading(true);
+      setErr(null);
+      try {
+        const url = await uploadBrandLogo(file, selectedBrand.slug, file.name);
+        await updateBrandLogo(brandId, url);
+        // Optimistically reflect the new logo locally so the preview swaps
+        // immediately without a refetch.
+        setBrands((prev) =>
+          prev.map((b) => (b.id === brandId ? { ...b, logo_url: url } : b))
+        );
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : "Logo upload failed");
+      } finally {
+        setLogoUploading(false);
+      }
+    },
+    [selectedBrand]
+  );
+
+  const handleLogoRemove = useCallback(async () => {
+    if (!selectedBrand) return;
+    const brandId = selectedBrand.id;
+    try {
+      await updateBrandLogo(brandId, null);
+      setBrands((prev) =>
+        prev.map((b) => (b.id === brandId ? { ...b, logo_url: null } : b))
+      );
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Logo remove failed");
+    }
+  }, [selectedBrand]);
+
   const clientOrigin =
     typeof window !== "undefined" ? window.location.origin : "";
   const clientUrl = selectedBrand
@@ -206,8 +246,11 @@ export default function Outreach() {
       </header>
 
       {/* Body */}
-      <main className="flex-1 min-h-0 overflow-y-auto px-8 py-10">
-        <div className="max-w-[1100px] mx-auto">
+      <main className="flex-1 min-h-0 overflow-y-auto px-6 sm:px-10 py-10">
+        {/* Wider container so the admin preview matches the client-site
+            scale — hero slots can stretch close to full-width on big monitors
+            and shrink down with the viewport. */}
+        <div className="max-w-[1480px] mx-auto">
           {/* Brand selector + theme pickers + client-site generator */}
           <div className="mb-10 flex items-end justify-between flex-wrap gap-6">
             <div>
@@ -244,9 +287,15 @@ export default function Outreach() {
               )}
             </div>
 
-            {/* Theme pickers */}
+            {/* Theme pickers + brand logo */}
             {selectedBrand && (
               <div className="flex items-end gap-5">
+                <BrandLogoField
+                  logoUrl={selectedBrand.logo_url}
+                  uploading={logoUploading}
+                  onUpload={handleLogoUpload}
+                  onRemove={handleLogoRemove}
+                />
                 <ColorPickerField
                   label="Primary"
                   value={selectedBrand.primary_color || DEFAULT_PRIMARY}
@@ -302,12 +351,11 @@ export default function Outreach() {
             </p>
           )}
 
-          {/* Hero slots (3D / Magic) */}
-          <section className="mb-14">
-            <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-4">
-              Configured Products
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          {/* Hero slots (3D / Magic) — full-width, 3-up on desktop, shrinks
+              gracefully on smaller viewports. Mirrors the client-site layout
+              so what the admin sees is what they ship. */}
+          <section className="mb-16">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
               {[1, 2, 3].map((i) => (
                 <ProductSlot
                   key={i}
@@ -319,13 +367,13 @@ export default function Outreach() {
             </div>
           </section>
 
-          {/* Gallery */}
+          {/* Digital Previews — bigger tiles, fewer columns at each breakpoint. */}
           <section className="pb-10">
             <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-4">
-              Gallery
+              Digital Previews
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-              {Array.from({ length: 10 }, (_, i) => i + 1).map((i) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              {Array.from({ length: 8 }, (_, i) => i + 1).map((i) => (
                 <GallerySlot
                   key={i}
                   index={i}
@@ -350,6 +398,80 @@ export default function Outreach() {
           onClose={() => setPreview(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ───────── Brand-logo upload field ─────────
+   Sits next to the colour pickers in the brand row. Acts as a drop-in for a
+   colour picker visually (same height, same label cap) but shows the active
+   logo as a thumbnail with `object-contain` so the original aspect ratio is
+   always preserved — never stretched. */
+function BrandLogoField({
+  logoUrl,
+  uploading,
+  onUpload,
+  onRemove,
+}: {
+  logoUrl: string | null;
+  uploading: boolean;
+  onUpload: (file: File) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 select-none">
+      <span className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35">
+        Logo
+      </span>
+      <div className="flex items-center gap-2 h-10 pl-2 pr-2 rounded-lg border border-[#e8ecf2] bg-white">
+        {/* Thumbnail / placeholder. Square frame so a wide or tall logo both
+            sit centered without stretching; object-contain keeps the natural
+            aspect ratio inside the box. */}
+        <div className="w-7 h-7 rounded-md border border-[#e8ecf2] bg-[#f5f7fb] overflow-hidden flex items-center justify-center">
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUrl}
+              alt="Brand logo"
+              className="w-full h-full object-contain"
+              draggable={false}
+            />
+          ) : (
+            <span className="text-[#272724]/30 text-[10px] font-semibold">
+              ?
+            </span>
+          )}
+        </div>
+
+        {/* Upload trigger — file input is hidden, label is the click target.
+            Uses key={logoUrl} on the input so re-uploading the same filename
+            still fires onChange. */}
+        <label className="cursor-pointer text-[10px] font-semibold tracking-[0.14em] uppercase text-[#272724]/55 hover:[color:var(--brand-secondary)] transition">
+          {uploading ? "Uploading…" : logoUrl ? "Replace" : "Upload"}
+          <input
+            key={logoUrl ?? "empty"}
+            type="file"
+            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onUpload(f);
+            }}
+          />
+        </label>
+
+        {logoUrl && !uploading && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-[10px] font-semibold tracking-[0.14em] uppercase text-[#272724]/35 hover:text-red-500 transition"
+            title="Remove logo"
+          >
+            ×
+          </button>
+        )}
+      </div>
     </div>
   );
 }

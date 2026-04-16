@@ -3,16 +3,20 @@
 import dynamic from "next/dynamic";
 import type { ProductSet } from "@/lib/types";
 
+const SLOT_LOADER = (
+  <div className="w-full h-full flex items-center justify-center bg-[#f0f2f7]">
+    <div className="w-7 h-7 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin" />
+  </div>
+);
+
 const OutreachBagViewer = dynamic(
   () => import("@/components/OutreachBagViewer"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="w-full h-full flex items-center justify-center bg-[#f0f2f7]">
-        <div className="w-7 h-7 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin" />
-      </div>
-    ),
-  }
+  { ssr: false, loading: () => SLOT_LOADER }
+);
+
+const OutreachJarViewer = dynamic(
+  () => import("@/components/OutreachJarViewer"),
+  { ssr: false, loading: () => SLOT_LOADER }
 );
 
 /* ───────── Hero slot (big card, 3D or flat) ───────── */
@@ -44,10 +48,18 @@ export function ProductSlot({
               draggable={false}
             />
           </button>
+        ) : set.product_type === "supplement-jar" ? (
+          <OutreachJarViewer
+            textureUrl={set.label_image_url}
+            material={set.material}
+            environment={set.environment}
+            autoRotate
+          />
         ) : (
           <OutreachBagViewer
             textureUrl={set.label_image_url}
             material={set.material}
+            environment={set.environment}
             autoRotate
           />
         )}

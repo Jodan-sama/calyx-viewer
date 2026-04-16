@@ -5,6 +5,7 @@ import {
   type ProductSet,
   type ProductSetKind,
   type ProductSetSection,
+  type SceneEnvironment,
 } from "./types";
 import type { BagMaterial } from "./bagMaterial";
 
@@ -37,6 +38,21 @@ export async function updateBrandColors(
   const { data, error } = await getSupabase()
     .from("brands")
     .update(patch)
+    .eq("id", brandId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Brand;
+}
+
+/** Patch the brand's logo URL. Pass `null` to clear it. */
+export async function updateBrandLogo(
+  brandId: string,
+  logoUrl: string | null
+): Promise<Brand> {
+  const { data, error } = await getSupabase()
+    .from("brands")
+    .update({ logo_url: logoUrl })
     .eq("id", brandId)
     .select()
     .single();
@@ -90,6 +106,7 @@ export async function saveSet(input: {
   product_type: ProductSet["product_type"];
   label_image_url: string;
   material?: BagMaterial | null;
+  environment?: SceneEnvironment | null;
 }): Promise<ProductSet> {
   const supabase = getSupabase();
 
@@ -110,6 +127,7 @@ export async function saveSet(input: {
     product_type: input.product_type,
     label_image_url: input.label_image_url,
     material: input.material ?? null,
+    environment: input.environment ?? "default",
   };
 
   const { data, error } = await supabase

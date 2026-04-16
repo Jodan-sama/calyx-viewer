@@ -6,9 +6,14 @@ import { use } from "react";
 import { getBrandBySlug, listSetsForBrand } from "@/lib/brands";
 import { supabaseConfigured } from "@/lib/supabase";
 import type { Brand, ProductSet } from "@/lib/types";
-import { brandThemeVars, resolveBrandColors } from "@/lib/brandTheme";
+import {
+  brandThemeVars,
+  hexToRgba,
+  resolveBrandColors,
+} from "@/lib/brandTheme";
 import { ProductSlot, GallerySlot } from "@/components/OutreachSlot";
 import ImagePreviewModal from "@/components/ImagePreviewModal";
+import WigglyLines from "@/components/WigglyLines";
 
 export default function ClientSite({
   params,
@@ -66,17 +71,28 @@ export default function ClientSite({
     return map;
   }, [sets]);
 
-  // Brand-scoped theme (primary = page bg, secondary = accents)
+  // Brand-scoped theme (primary = page bg gradient, secondary = accents)
   const colors = resolveBrandColors(brand);
   const themeVars = brandThemeVars(colors);
+  // Wavy-line backdrop colour: brand accent at low opacity so the lines read
+  // as ambient texture against the gradient rather than a pattern overlay.
+  const wavyColor = hexToRgba(colors.secondary, 0.22);
 
   return (
     <div
       className="relative w-full h-screen overflow-hidden flex flex-col"
-      style={{ ...themeVars, background: "var(--brand-primary)" }}
+      style={{ ...themeVars, background: "var(--brand-primary-gradient)" }}
     >
+      {/* Page-wide accent-colour wavy backdrop. Sits behind every layer of
+          chrome via z-0; pointer-events off so all clicks fall through to
+          the slots and gallery underneath. Re-mounted on accent change so
+          the canvas re-paints with the new stroke colour. */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
+        <WigglyLines key={colors.secondary} seed={5} color={wavyColor} />
+      </div>
+
       {/* Centered logo header, no admin chrome */}
-      <header className="flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
+      <header className="relative z-10 flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
         <Image
           src="/calyx-logo.svg"
           alt="Calyx Containers"
@@ -88,8 +104,12 @@ export default function ClientSite({
       </header>
 
       {/* Body */}
-      <main className="flex-1 min-h-0 overflow-y-auto px-8 py-12">
-        <div className="max-w-[1100px] mx-auto">
+      <main className="relative z-10 flex-1 min-h-0 overflow-y-auto px-6 sm:px-10 py-12">
+        {/* Wider container: hero slots are intentionally near full-width on
+            desktop. The 1480px cap keeps very wide monitors from blowing the
+            slots up to mural-size while still letting them dominate at typical
+            laptop widths. */}
+        <div className="max-w-[1480px] mx-auto">
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <div
@@ -103,23 +123,34 @@ export default function ClientSite({
             </p>
           ) : (
             <>
-              {brand && (
-                <div className="mb-10">
-                  <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-2">
-                    Presentation
-                  </p>
-                  <h1 className="text-[28px] leading-[1.15] font-light tracking-tight text-[#272724]">
-                    {brand.name}
-                  </h1>
-                </div>
-              )}
+              {/* Centered brand-logo slot. Always reserves vertical space so
+                  the layout is stable while a logo is being uploaded; renders
+                  a subtle dashed placeholder when no logo is set. The image
+                  uses object-contain + auto-width so the original aspect
+                  ratio is always preserved — never stretches to fill. */}
+              <div className="mb-12 flex items-center justify-center min-h-[120px]">
+                {brand?.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={brand.logo_url}
+                    alt={brand.name}
+                    className="max-h-[120px] w-auto object-contain select-none"
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="h-[120px] aspect-[3/1] max-w-[360px] w-full rounded-xl border border-dashed border-[#272724]/15 flex items-center justify-center">
+                    <span className="text-[10px] tracking-[0.24em] uppercase text-[#272724]/30 select-none">
+                      Brand Logo
+                    </span>
+                  </div>
+                )}
+              </div>
 
-              {/* 3D slots row */}
-              <section className="mb-14">
-                <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-4">
-                  Configured Products
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {/* 3D slots row — full-width on desktop, stacks to 2-up on
+                  tablets, 1-up on phones. Slot tiles intrinsically size to
+                  the available column, so they shrink with the screen. */}
+              <section className="mb-16">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
                   {[1, 2, 3].map((i) => (
                     <ProductSlot
                       key={i}
@@ -131,13 +162,14 @@ export default function ClientSite({
                 </div>
               </section>
 
-              {/* Gallery grid */}
+              {/* Digital Previews grid — fewer columns at each breakpoint so
+                  each square is bigger. Caps at 4 columns on widest screens. */}
               <section className="pb-10">
                 <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-4">
-                  Gallery
+                  Digital Previews
                 </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-                  {Array.from({ length: 10 }, (_, i) => i + 1).map((i) => (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                  {Array.from({ length: 8 }, (_, i) => i + 1).map((i) => (
                     <GallerySlot
                       key={i}
                       index={i}
@@ -153,7 +185,7 @@ export default function ClientSite({
       </main>
 
       {/* Footer — brand name */}
-      <div className="flex-shrink-0 text-center pb-5 text-[10px] font-light tracking-[0.24em] uppercase text-[#272724]/35 select-none">
+      <div className="relative z-10 flex-shrink-0 text-center pb-5 text-[10px] font-light tracking-[0.24em] uppercase text-[#272724]/35 select-none">
         {brand ? brand.name : "Calyx Containers"}
       </div>
 

@@ -7,18 +7,26 @@ import {
   saveSet,
 } from "@/lib/brands";
 import { uploadLabel, supabaseConfigured } from "@/lib/supabase";
-import type { Brand, ProductSet, ProductSetKind } from "@/lib/types";
+import type { Brand, ProductSet, ProductSetKind, SceneEnvironment } from "@/lib/types";
 import type { BagMaterial } from "@/lib/bagMaterial";
 
 /**
  * The dialog accepts a polymorphic "source":
- *  - bag-3d: a raw label image File — rendered on the 3D bag in Outreach.
- *    Carries the current material/lighting config so Outreach can faithfully
- *    reproduce the look at save time.
+ *  - bag-3d: a raw label image File — rendered on the 3D model in Outreach.
+ *    `productType` hints which model (mylar bag vs supplement jar) was being
+ *    previewed when the user clicked save, so the slot can render the right
+ *    geometry. Carries the current material/lighting config so Outreach can
+ *    faithfully reproduce the look at save time.
  *  - flat-image: a pre-rendered image blob (e.g. Make Magic output) — shown flat.
  */
 export type SaveSource =
-  | { kind: "bag-3d"; file: File; material: BagMaterial }
+  | {
+      kind: "bag-3d";
+      file: File;
+      material: BagMaterial;
+      productType?: ProductSet["product_type"];
+      environment?: SceneEnvironment;
+    }
   | { kind: "flat-image"; blob: Blob; filename: string };
 
 type Props = {
@@ -39,15 +47,26 @@ export default function SaveToOutreachDialog({
   const [newBrandName, setNewBrandName] = useState("");
   const [title, setTitle] = useState("");
   const [slot, setSlot] = useState<number>(1);
-  const [productType, setProductType] =
-    useState<ProductSet["product_type"]>("mylar-bag");
+  const [productType, setProductType] = useState<ProductSet["product_type"]>(
+    source?.kind === "bag-3d" && source.productType
+      ? source.productType
+      : "mylar-bag"
+  );
+
+  // Keep productType in sync if the source changes while the dialog is mounted
+  // (e.g. user reopens it for a different model without unmounting first).
+  useEffect(() => {
+    if (source?.kind === "bag-3d" && source.productType) {
+      setProductType(source.productType);
+    }
+  }, [source]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const kind: ProductSetKind = source?.kind ?? "bag-3d";
   const section: "hero" | "gallery" =
     kind === "flat-image" ? "gallery" : "hero";
-  const maxSlot = section === "hero" ? 3 : 10;
+  const maxSlot = section === "hero" ? 3 : 8;
 
   useEffect(() => {
     if (!supabaseConfigured) {
@@ -97,6 +116,7 @@ export default function SaveToOutreachDialog({
           product_type: productType,
           label_image_url,
           material: source.kind === "bag-3d" ? source.material : null,
+          environment: source.kind === "bag-3d" ? source.environment ?? "default" : "default",
         });
         onSaved?.(set);
         onClose();
@@ -122,7 +142,7 @@ export default function SaveToOutreachDialog({
     ]
   );
 
-  // Reset slot when switching sections (hero max=3, gallery max=10)
+  // Reset slot when switching sections (hero max=3, gallery max=8)
   useEffect(() => {
     setSlot(1);
   }, [section]);
@@ -177,7 +197,7 @@ export default function SaveToOutreachDialog({
           </span>
           <span className="text-[10px] text-[#272724]/45">
             {kind === "flat-image"
-              ? "Saved into the gallery row."
+              ? "Saved into the digital previews row."
               : "Saved into a hero 3D slot."}
           </span>
         </div>
@@ -243,11 +263,11 @@ export default function SaveToOutreachDialog({
         {/* Slot */}
         <div className="space-y-2">
           <label className="text-[10px] font-medium tracking-[0.18em] uppercase text-[#272724]/55">
-            {section === "hero" ? "Hero slot (1–3)" : "Gallery slot (1–10)"}
+            {section === "hero" ? "Hero slot (1–3)" : "Digital Previews slot (1–8)"}
           </label>
           <div
             className={`grid gap-2 ${
-              section === "hero" ? "grid-cols-3" : "grid-cols-5"
+              section === "hero" ? "grid-cols-3" : "grid-cols-4"
             }`}
           >
             {Array.from({ length: maxSlot }, (_, i) => i + 1).map((s) => (

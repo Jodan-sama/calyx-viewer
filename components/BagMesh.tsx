@@ -24,6 +24,11 @@ interface BagMeshProps {
    *  caller dim the HDRI reflections on the bag without touching the
    *  scene's <Environment>. 1.0 = default, 0.5 = half-strength, etc. */
   envIntensityScale?: number;
+  /** When true (Default scene), the bag floats above the contact shadow
+   *  with a gentle ±0.02 oscillation. When false (Smoke scene), it sits
+   *  flush on the reflective floor so the cast reflection joins seamlessly
+   *  at the base. */
+  floating?: boolean;
 }
 
 // Base env-map intensities per material — the scale prop multiplies into these.
@@ -236,6 +241,7 @@ export default function BagMesh({
   iridescenceThicknessRange = [100, 800],
   finish = "",
   envIntensityScale = 1,
+  floating = true,
 }: BagMeshProps) {
   // ── Refs ───────────────────────────────────────────────────────────────────
   const groupRef = useRef<THREE.Group>(null);
@@ -468,12 +474,20 @@ export default function BagMesh({
   useEffect(() => () => { backLabelGeo?.dispose(); }, [backLabelGeo]);
 
   // ── Animation loop: float + decal rebuild ──────────────────────────────────
-  const BASE_Y = -1.1;
+  // BASE_Y_FLOAT centres the gentle ±0.02 oscillation in the Default scene;
+  // BASE_Y_GROUND drops the bag onto the Smoke scene's reflective floor
+  // (y=-1.265) with a small offset that matches where the mylar's lower
+  // pinch sits relative to the group origin.
+  const BASE_Y_FLOAT = -1.1;
+  const BASE_Y_GROUND = -1.265;
+  const BASE_Y = floating ? BASE_Y_FLOAT : BASE_Y_GROUND;
 
   useFrame(({ clock }) => {
     if (!groupRef.current) return;
 
-    groupRef.current.position.y = BASE_Y + Math.sin(clock.elapsedTime * 0.6) * 0.02;
+    groupRef.current.position.y = floating
+      ? BASE_Y_FLOAT + Math.sin(clock.elapsedTime * 0.6) * 0.02
+      : BASE_Y_GROUND;
 
     if (!decalDirty.current) return;
     decalDirty.current = false;

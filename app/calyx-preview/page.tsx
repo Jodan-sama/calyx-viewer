@@ -71,6 +71,9 @@ export default function CalyxPreview() {
   // upload buttons can re-label themselves (Bag Front/Back → Layer 2/3 Art).
   const [currentModel, setCurrentModel] = useState<"bag" | "jar">("bag");
 
+  // Active environment — tracked so saves capture the scene layout at save time.
+  const [currentEnvironment, setCurrentEnvironment] = useState<"default" | "smoke" | "dim">("default");
+
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [magicImageUrl, setMagicImageUrl] = useState<string | null>(null);
   const [isMakingMagic, setIsMakingMagic] = useState(false);
@@ -307,13 +310,20 @@ export default function CalyxPreview() {
                 kind: "bag-3d",
                 file: frontFile,
                 material: materialRef.current,
+                productType:
+                  currentModel === "jar" ? "supplement-jar" : "mylar-bag",
+                environment: currentEnvironment,
               })
             }
             disabled={!frontFile}
             title={
               frontFile
-                ? "Save this label as a 3D bag slot on Outreach"
-                : "Upload a bag front first"
+                ? currentModel === "jar"
+                  ? "Save this label as a 3D jar slot on Outreach"
+                  : "Save this label as a 3D bag slot on Outreach"
+                : currentModel === "jar"
+                  ? "Upload Layer 2 art first"
+                  : "Upload a bag front first"
             }
             className="w-[160px] h-7 rounded-full text-[10px] font-semibold uppercase tracking-[0.12em] transition-all active:scale-95 select-none text-white bg-[#272724] hover:bg-[#0033A1] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#272724]"
           >
@@ -392,6 +402,7 @@ export default function CalyxPreview() {
             captureRef={captureRef}
             onMaterialChange={handleMaterialChange}
             onModelChange={setCurrentModel}
+            onEnvironmentChange={setCurrentEnvironment}
           />
           {/* Bottom hint sits over the canvas */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">
@@ -406,7 +417,7 @@ export default function CalyxPreview() {
               Material Controls
             </span>
           </header>
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto calyx-leva">
             <Leva
               fill
               flat
