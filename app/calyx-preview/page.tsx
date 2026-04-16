@@ -16,6 +16,7 @@ import {
   type BagMaterial,
 } from "@/lib/bagMaterial";
 import { getSetById } from "@/lib/brands";
+import { convertImageToWebPLogged } from "@/lib/image";
 import type { SceneEnvironment } from "@/lib/types";
 
 // Shared theme for the docked Leva panel — matches the rest of the UI chrome.
@@ -187,10 +188,19 @@ export default function CalyxPreview() {
     []
   );
 
+  // Every upload handler runs the picked file through
+  // `convertImageToWebPLogged` before it hits state. Resolution is
+  // preserved exactly; only the container changes (PNG/JPEG → WebP at
+  // quality 0.95, which is visually identical but typically 30–50%
+  // smaller). The File we store in state is the converted one, so
+  // everything downstream — the blob URL handed to three.js, the
+  // `frontFile` used by Save-to-Outreach, the Supabase upload — sees
+  // WebP bytes without any further wiring.
   const handleFrontUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.files?.[0];
+      if (!raw) return;
+      const file = await convertImageToWebPLogged(raw, "front");
       setFrontTextureUrl((prev) => swapBlobUrl(prev, URL.createObjectURL(file)));
       setFrontFile(file);
       setFrontFileName(file.name);
@@ -201,9 +211,10 @@ export default function CalyxPreview() {
   );
 
   const handleBackUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.files?.[0];
+      if (!raw) return;
+      const file = await convertImageToWebPLogged(raw, "back");
       setBackTextureUrl((prev) => swapBlobUrl(prev, URL.createObjectURL(file)));
       setBackFileName(file.name);
       setMagicImageUrl(null);
@@ -215,9 +226,10 @@ export default function CalyxPreview() {
   // Layer 3 uploaders — only shown in bag mode. Start null so the mesh
   // skips the Layer 3 decals until a texture is provided.
   const handleLayer3FrontUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.files?.[0];
+      if (!raw) return;
+      const file = await convertImageToWebPLogged(raw, "layer3-front");
       setLayer3FrontTextureUrl((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
@@ -228,9 +240,10 @@ export default function CalyxPreview() {
   );
 
   const handleLayer3BackUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.files?.[0];
+      if (!raw) return;
+      const file = await convertImageToWebPLogged(raw, "layer3-back");
       setLayer3BackTextureUrl((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
@@ -546,14 +559,22 @@ export default function CalyxPreview() {
               <button
                 onClick={async () => {
                   const res = await fetch(magicImageUrl);
-                  const blob = await res.blob();
-                  const ext = (blob.type.split("/")[1] ?? "jpg").replace(
-                    "jpeg",
-                    "jpg"
-                  );
+                  const rawBlob = await res.blob();
+                  // Route the Magic image through the same WebP encoder
+                  // the uploads use so Supabase only ever stores the
+                  // smaller format. Gemini returns JPEG; converting at
+                  // quality 0.95 is visually indistinguishable and
+                  // usually trims another ~25–40% off the file size.
+                  const rawFile = new File([rawBlob], `magic.${(rawBlob.type.split("/")[1] ?? "jpg").replace("jpeg", "jpg")}`, {
+                    type: rawBlob.type || "image/jpeg",
+                  });
+                  const converted = await convertImageToWebPLogged(rawFile, "magic");
+                  const ext = converted.type === "image/webp"
+                    ? "webp"
+                    : (converted.type.split("/")[1] ?? "jpg").replace("jpeg", "jpg");
                   setSaveSource({
                     kind: "flat-image",
-                    blob,
+                    blob: converted,
                     filename: `magic-${Date.now()}.${ext}`,
                   });
                 }}
