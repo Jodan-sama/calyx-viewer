@@ -68,8 +68,18 @@ interface BagMeshProps {
 }
 
 // Base env-map intensities per material — the scale prop multiplies into these.
-const MYLAR_ENV_BASE = 2.0;
-const LABEL_ENV_BASE = 0.5;
+// Base envMapIntensity multipliers, further scaled by the scene's
+// dim/HDRI sliders at runtime. Originally the mylar was cranked to
+// 2.0 for a chrome look while the label sat at 0.5 so artwork colors
+// would stay legible — but that 4× gap made it look like only one
+// material "caught the light" when the user rotated the bag, since
+// the same HDRI direction rendered as a saturated hotspot on the
+// mylar and a barely-visible tint on the label. Narrowing the gap
+// to ~2× (1.6 vs 0.9) keeps the mylar obviously more reflective
+// than the label without making reflection look like it only
+// happens on one or the other.
+const MYLAR_ENV_BASE = 1.6;
+const LABEL_ENV_BASE = 0.9;
 const FOIL_ENV_BASE = 0.6;
 const CHROME_ENV_BASE = 0.25;
 const PRISM_ENV_BASE = 0.45;
@@ -247,29 +257,21 @@ function buildLabelGeo(
   }
   geo.computeVertexNormals();
 
-  // Force normals to point outward on the panel they belong to.
-  // `computeVertexNormals()` derives directions from triangle winding,
-  // and the mylar bag GLB is modeled with the back panel as a mirrored
-  // instance of the front — so when both get merged into one geometry
-  // their windings disagree. The result before this pass: one panel's
-  // label normals point INTO the bag instead of OUT, which kills
-  // direct-light diffuse (`max(0, dot(light, normal))` → 0) and sends
-  // specular highlights to the wrong hemisphere. The visible symptom
-  // is exactly what gets reported as "the artwork reflects on one
-  // side but not the other" — base mylar escapes the bug because it
-  // renders with `side: DoubleSide` and three.js auto-flips normals
-  // for truly back-facing triangles, but label materials use
-  // `FrontSide` and need the normals themselves to be correct.
-  //
-  // Front panel outward = +Z, back panel outward = -Z. Flip any normal
-  // whose Z component disagrees with the expected sign. The geometry
-  // is planar enough in the bag local frame that raw Z-sign is a
-  // sufficient test; the zipper edge curvature doesn't dip far enough
-  // into the opposite Z-half-space to produce false flips.
+  // Belt-and-suspenders: check whether the whole panel's normals
+  // end up pointing inward as a consensus (sum of Z vs expected
+  // outward sign). The current mylar bag GLB doesn't trip this —
+  // runtime diagnostics confirmed sumZ≈+58k for front and ≈-59k
+  // for back on a typical load — but it's cheap insurance against
+  // a future GLB swap whose winding has the opposite convention.
+  // A global inversion preserves relative orientation of zipper-
+  // edge normals that legitimately point in non-Z directions, so
+  // we don't mangle curved features.
   const normals = geo.attributes.normal as THREE.BufferAttribute;
+  let sumZ = 0;
+  for (let i = 0; i < normals.count; i++) sumZ += normals.getZ(i);
   const outwardZ = side === "front" ? 1 : -1;
-  for (let i = 0; i < normals.count; i++) {
-    if (normals.getZ(i) * outwardZ < 0) {
+  if (sumZ * outwardZ < 0) {
+    for (let i = 0; i < normals.count; i++) {
       normals.setXYZ(
         i,
         -normals.getX(i),
@@ -277,8 +279,8 @@ function buildLabelGeo(
         -normals.getZ(i)
       );
     }
+    normals.needsUpdate = true;
   }
-  normals.needsUpdate = true;
 
   // UVs from XY bounds; mirror U for the back so art reads correctly.
   const posAttr = geo.attributes.position as THREE.BufferAttribute;
