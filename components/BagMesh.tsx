@@ -247,6 +247,39 @@ function buildLabelGeo(
   }
   geo.computeVertexNormals();
 
+  // Force normals to point outward on the panel they belong to.
+  // `computeVertexNormals()` derives directions from triangle winding,
+  // and the mylar bag GLB is modeled with the back panel as a mirrored
+  // instance of the front — so when both get merged into one geometry
+  // their windings disagree. The result before this pass: one panel's
+  // label normals point INTO the bag instead of OUT, which kills
+  // direct-light diffuse (`max(0, dot(light, normal))` → 0) and sends
+  // specular highlights to the wrong hemisphere. The visible symptom
+  // is exactly what gets reported as "the artwork reflects on one
+  // side but not the other" — base mylar escapes the bug because it
+  // renders with `side: DoubleSide` and three.js auto-flips normals
+  // for truly back-facing triangles, but label materials use
+  // `FrontSide` and need the normals themselves to be correct.
+  //
+  // Front panel outward = +Z, back panel outward = -Z. Flip any normal
+  // whose Z component disagrees with the expected sign. The geometry
+  // is planar enough in the bag local frame that raw Z-sign is a
+  // sufficient test; the zipper edge curvature doesn't dip far enough
+  // into the opposite Z-half-space to produce false flips.
+  const normals = geo.attributes.normal as THREE.BufferAttribute;
+  const outwardZ = side === "front" ? 1 : -1;
+  for (let i = 0; i < normals.count; i++) {
+    if (normals.getZ(i) * outwardZ < 0) {
+      normals.setXYZ(
+        i,
+        -normals.getX(i),
+        -normals.getY(i),
+        -normals.getZ(i)
+      );
+    }
+  }
+  normals.needsUpdate = true;
+
   // UVs from XY bounds; mirror U for the back so art reads correctly.
   const posAttr = geo.attributes.position as THREE.BufferAttribute;
   const uvAttr = geo.attributes.uv as THREE.BufferAttribute;
