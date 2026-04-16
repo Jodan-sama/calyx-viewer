@@ -728,23 +728,32 @@ export default function SupplementJarMesh({
 
   // ── Autofit ───────────────────────────────────────────────────────────────
   // Target height 1.0 units — the jar is wider than it is tall, so even with
-  // a modest height it still takes up a lot of horizontal viewport. Previous
-  // 1.8 target loaded with the jar nearly filling the canvas. baseGroupY pins
-  // the base above the ground plane: when `floating`, ~0.18 above y=-1.28 so
-  // the jar floats the same distance above the contact shadow as the bag
-  // does in the Default scene; when not floating (Smoke), it sits flush on
-  // the reflective floor (y=-1.265) so the cast reflection joins seamlessly
-  // at the base. The float animation oscillates ±0.02 around baseGroupY only
-  // when floating.
-  const FLOAT_GAP = 0.18;
-  const FLOOR_Y = floating ? -1.28 : -1.265;
-  const { targetScale, baseGroupY } = useMemo(() => {
+  // a modest height it still takes up a lot of horizontal viewport.
+  //
+  // IMPORTANT: targetScale is computed ONCE from the native model bbox, with
+  // only `processedBodyScene` as a dependency. If `floating` were in this
+  // dep array the useMemo would re-fire when the user switches environments,
+  // at which point `processedBodyScene` is already in the scene graph under
+  // a group with `scale=[targetScale, …]`. `Box3.setFromObject` returns the
+  // WORLD-space bbox (already scaled up), so the new targetScale collapses
+  // toward 1 — shrinking the jar to near-invisible. Splitting the two
+  // computations avoids this feedback loop.
+  const { targetScale, nativeBboxMinY } = useMemo(() => {
     const bbox = new THREE.Box3().setFromObject(processedBodyScene);
     const height = bbox.max.y - bbox.min.y;
     const targetScale = height > 0 ? 1.0 / height : 1000;
-    const baseGroupY = FLOOR_Y + (floating ? FLOAT_GAP : 0) - bbox.min.y * targetScale;
-    return { targetScale, baseGroupY };
-  }, [processedBodyScene, floating, FLOOR_Y]);
+    return { targetScale, nativeBboxMinY: bbox.min.y };
+  }, [processedBodyScene]);
+
+  // baseGroupY is derived — recalculates whenever floating changes without
+  // re-running the bounding-box computation. When `floating`, sits ~0.18
+  // above y=-1.28 so the jar floats the same distance above the contact
+  // shadow as the bag does in the Default scene; when not floating (Smoke),
+  // sits flush on the reflective floor (y=-1.265) so the cast reflection
+  // joins seamlessly at the base.
+  const FLOAT_GAP = 0.18;
+  const FLOOR_Y = floating ? -1.28 : -1.265;
+  const baseGroupY = FLOOR_Y + (floating ? FLOAT_GAP : 0) - nativeBboxMinY * targetScale;
 
   // Gentle hover — same speed/amplitude as the bag's float animation in
   // BagMesh, so swapping models doesn't change the scene's overall motion.
