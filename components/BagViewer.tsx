@@ -162,68 +162,50 @@ function SmokeLights() {
   );
 }
 
-// ── Dim scene lighting + shell ───────────────────────────────────────────────
-// Eight warm cream point lights wrapped around the bag — four primary rim
-// lights on the cardinal axes plus four softer corner fills — so the dim
-// environment still has plenty of shape-defining highlights even after the
-// HDRI and ambient are scaled down to 50%. Intensities stay modest; the goal
-// is a moody candle-lit read, not a studio bounce.
-function DimRimLights() {
+// ── Dim scene — dark moody environment with slowly-orbiting rainbow lights ──
+// Six coloured point lights arranged in a ring around the product, grouped
+// so the whole array rotates slowly. The base HDRI and ambient are pulled
+// to 20% so the rainbow highlights are the dominant light source; the dark
+// shell and floor complete the nightclub / display-case mood.
+function RainbowLights() {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = clock.elapsedTime * 0.15;
+    }
+  });
   return (
-    <>
-      {/* Cardinal rims — top, bottom, left, right */}
-      <pointLight position={[0, 1.6, 0.8]} intensity={14} color="#fff0d4" distance={8} decay={2} />
-      <pointLight position={[0, -1.4, 0.8]} intensity={10} color="#fde9c4" distance={8} decay={2} />
-      <pointLight position={[-1.9, 0, 0.8]} intensity={12} color="#fff3d8" distance={8} decay={2} />
-      <pointLight position={[1.9, 0, 0.8]} intensity={12} color="#fcebc0" distance={8} decay={2} />
-
-      {/* Corner fills — softer, slightly farther out so the rims dominate */}
-      <pointLight position={[-1.4, 1.2, 1.4]} intensity={9} color="#fff5dc" distance={8} decay={2} />
-      <pointLight position={[1.4, 1.2, 1.4]} intensity={9} color="#fdeec8" distance={8} decay={2} />
-      <pointLight position={[-1.4, -1.0, 1.4]} intensity={8} color="#ffeed0" distance={8} decay={2} />
-      <pointLight position={[1.4, -1.0, 1.4]} intensity={8} color="#ffe7c0" distance={8} decay={2} />
-
-      {/* Back fills — warm cream coming from behind the bag, gives the
-          aluminum shell something to bounce so silhouettes don't go dead. */}
-      <pointLight position={[-1.2, 0.4, -2.2]} intensity={10} color="#ffe9c4" distance={9} decay={2} />
-      <pointLight position={[1.2, 0.4, -2.2]} intensity={10} color="#fff0d4" distance={9} decay={2} />
-    </>
+    <group ref={groupRef}>
+      <pointLight position={[-2.5, 2.0, 1.5]} intensity={18} color="#ff2244" distance={12} decay={2} />
+      <pointLight position={[2.5, 0.5, 2.0]} intensity={16} color="#ff8800" distance={12} decay={2} />
+      <pointLight position={[0, 1.8, -2.5]} intensity={14} color="#ffdd00" distance={12} decay={2} />
+      <pointLight position={[-2.0, 2.5, -1.5]} intensity={16} color="#22ff44" distance={12} decay={2} />
+      <pointLight position={[2.0, -0.5, 1.0]} intensity={18} color="#2244ff" distance={12} decay={2} />
+      <pointLight position={[1.5, 2.5, -2.0]} intensity={14} color="#aa22ff" distance={12} decay={2} />
+    </group>
   );
 }
 
-// Soft cream ground plane for the Dim scene. Sits at the same y as the
-// contact-shadow plane so the bag/jar look like they're floating just above
-// it, matching the Default scene's grounding. Roughness is high so the plane
-// reads as a soft surface rather than a polished floor — the Smoke scene is
-// where the mirror floor lives.
+// Dark glass floor for the Dim scene — highly reflective so the rainbow
+// lights leave vivid coloured pools on the surface and the product gets
+// a strong cast reflection. Uses the same MeshReflectorMaterial as the
+// Smoke scene but with a much darker tint for the nightclub mood.
 function DimFloor() {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.28, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
-      <meshStandardMaterial
-        color="#f6ecd6"
-        metalness={0.05}
-        roughness={0.9}
-      />
-    </mesh>
-  );
-}
-
-// Large aluminum sphere rendered on the inside (THREE.BackSide) so the camera
-// sits inside a soft metal shell. Radius is well outside OrbitControls'
-// maxDistance (10) so the user can orbit without clipping through. The
-// brushed-aluminum finish (metalness 0.9, roughness 0.35) provides subtle
-// grey surroundings that catch the dim cream lights and give the bag's
-// reflections something besides the flat background to land on.
-function AluminumShell() {
-  return (
-    <mesh>
-      <sphereGeometry args={[14, 48, 32]} />
-      <meshStandardMaterial
-        color="#b8bcc3"
-        metalness={0.7}
-        roughness={0.1}
-        side={THREE.BackSide}
+      <MeshReflectorMaterial
+        blur={[120, 40]}
+        resolution={2048}
+        mixBlur={0.6}
+        mixStrength={8.0}
+        roughness={0.05}
+        depthScale={0.8}
+        minDepthThreshold={0.2}
+        maxDepthThreshold={1.4}
+        color="#0a0a12"
+        metalness={0.9}
+        mirror={1}
       />
     </mesh>
   );
@@ -464,10 +446,10 @@ export default function BagViewer({
   const isDim = environment === "dim";
 
   // Dim mode pulls every light source — ambient, HDRI-driven scene lighting,
-  // and the bag material's env-map reflections — down to 50%. Rave already
-  // has its own explicit intensity for the HDRI, so we don't stack dimming
-  // on top of it.
-  const dimScale = isDim ? 0.5 : 1;
+  // and the bag material's env-map reflections — down to 20% so the animated
+  // rainbow lights are the dominant illumination. Rave already has its own
+  // explicit intensity for the HDRI, so we don't stack dimming on top of it.
+  const dimScale = isDim ? 0.2 : 1;
 
   // Keep the studio-light background regardless of environment. The smoke
   // scene relies on a backlight behind the clouds to create contrast rather
@@ -536,8 +518,7 @@ export default function BagViewer({
 
         {isDim && (
           <>
-            <DimRimLights />
-            <AluminumShell />
+            <RainbowLights />
             <DimFloor />
           </>
         )}

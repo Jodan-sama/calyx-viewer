@@ -92,21 +92,23 @@ function ReflectiveFloor() {
   );
 }
 
-// ── Dim scene elements (mirrors BagViewer) ───────────────────────────────────
-function DimRimLights() {
+// ── Dim scene — dark moody environment with orbiting rainbow lights ─────────
+function RainbowLights() {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = clock.elapsedTime * 0.15;
+    }
+  });
   return (
-    <>
-      <pointLight position={[0, 1.6, 0.8]} intensity={14} color="#fff0d4" distance={8} decay={2} />
-      <pointLight position={[0, -1.4, 0.8]} intensity={10} color="#fde9c4" distance={8} decay={2} />
-      <pointLight position={[-1.9, 0, 0.8]} intensity={12} color="#fff3d8" distance={8} decay={2} />
-      <pointLight position={[1.9, 0, 0.8]} intensity={12} color="#fcebc0" distance={8} decay={2} />
-      <pointLight position={[-1.4, 1.2, 1.4]} intensity={9} color="#fff5dc" distance={8} decay={2} />
-      <pointLight position={[1.4, 1.2, 1.4]} intensity={9} color="#fdeec8" distance={8} decay={2} />
-      <pointLight position={[-1.4, -1.0, 1.4]} intensity={8} color="#ffeed0" distance={8} decay={2} />
-      <pointLight position={[1.4, -1.0, 1.4]} intensity={8} color="#ffe7c0" distance={8} decay={2} />
-      <pointLight position={[-1.2, 0.4, -2.2]} intensity={10} color="#ffe9c4" distance={9} decay={2} />
-      <pointLight position={[1.2, 0.4, -2.2]} intensity={10} color="#fff0d4" distance={9} decay={2} />
-    </>
+    <group ref={groupRef}>
+      <pointLight position={[-2.5, 2.0, 1.5]} intensity={18} color="#ff2244" distance={12} decay={2} />
+      <pointLight position={[2.5, 0.5, 2.0]} intensity={16} color="#ff8800" distance={12} decay={2} />
+      <pointLight position={[0, 1.8, -2.5]} intensity={14} color="#ffdd00" distance={12} decay={2} />
+      <pointLight position={[-2.0, 2.5, -1.5]} intensity={16} color="#22ff44" distance={12} decay={2} />
+      <pointLight position={[2.0, -0.5, 1.0]} intensity={18} color="#2244ff" distance={12} decay={2} />
+      <pointLight position={[1.5, 2.5, -2.0]} intensity={14} color="#aa22ff" distance={12} decay={2} />
+    </group>
   );
 }
 
@@ -114,16 +116,19 @@ function DimFloor() {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.28, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
-      <meshStandardMaterial color="#f6ecd6" metalness={0.05} roughness={0.9} />
-    </mesh>
-  );
-}
-
-function AluminumShell() {
-  return (
-    <mesh>
-      <sphereGeometry args={[14, 48, 32]} />
-      <meshStandardMaterial color="#b8bcc3" metalness={0.7} roughness={0.1} side={THREE.BackSide} />
+      <MeshReflectorMaterial
+        blur={[120, 40]}
+        resolution={2048}
+        mixBlur={0.6}
+        mixStrength={8.0}
+        roughness={0.05}
+        depthScale={0.8}
+        minDepthThreshold={0.2}
+        maxDepthThreshold={1.4}
+        color="#0a0a12"
+        metalness={0.9}
+        mirror={1}
+      />
     </mesh>
   );
 }
@@ -164,7 +169,7 @@ export default function OutreachJarViewer({
   const env = envProp ?? "default";
   const isSmoke = env === "smoke";
   const isDim = env === "dim";
-  const dimScale = isDim ? 0.5 : 1;
+  const dimScale = isDim ? 0.2 : 1;
   const iridescenceCfg =
     mat.finish !== "custom" ? FINISH_PRESETS[mat.finish] : null;
 
@@ -234,8 +239,7 @@ export default function OutreachJarViewer({
 
         {isDim && (
           <>
-            <DimRimLights />
-            <AluminumShell />
+            <RainbowLights />
             <DimFloor />
           </>
         )}
