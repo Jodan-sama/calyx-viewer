@@ -125,7 +125,15 @@ export async function updateSetTitle(
   return data as ProductSet;
 }
 
-/** Upsert a set into a specific (brand, section, slot) cell. Replaces any existing row. */
+/** Upsert a set into a specific (brand, section, slot) cell. Replaces any existing row.
+ *
+ *  `preview_image_url` requires a one-time DB migration:
+ *      ALTER TABLE product_sets ADD COLUMN preview_image_url TEXT;
+ *
+ *  To stay backwards-compatible with DBs that haven't run the migration
+ *  yet, we detect the "column does not exist" error (PostgREST code
+ *  PGRST204 / 42703) and retry the insert with the field stripped, so
+ *  the feature gracefully degrades rather than blocking saves. */
 export async function saveSet(input: {
   brand_id: string;
   section: ProductSetSection;
@@ -136,6 +144,7 @@ export async function saveSet(input: {
   label_image_url: string;
   material?: BagMaterial | null;
   environment?: SceneEnvironment | null;
+  preview_image_url?: string | null;
 }): Promise<ProductSet> {
   const supabase = getSupabase();
 
@@ -147,7 +156,7 @@ export async function saveSet(input: {
     .eq("section", input.section)
     .eq("slot", input.slot);
 
-  const row = {
+  const baseRow = {
     brand_id: input.brand_id,
     section: input.section,
     slot: input.slot,
@@ -158,12 +167,39 @@ export async function saveSet(input: {
     material: input.material ?? null,
     environment: input.environment ?? "default",
   };
+  const row =
+    input.preview_image_url !== undefined
+      ? { ...baseRow, preview_image_url: input.preview_image_url }
+      : baseRow;
 
   const { data, error } = await supabase
     .from("product_sets")
     .insert(row)
     .select()
     .single();
-  if (error) throw error;
-  return data as ProductSet;
+  if (!error) return data as ProductSet;
+
+  // Fallback: column doesn't exist yet → retry without the field.
+  // PostgREST surfaces unknown-column errors with message "column
+  // \"preview_image_url\" … does not exist" and code PGRST204 / 42703.
+  const msg = (error.message ?? "").toLowerCase();
+  const missingCol =
+    msg.includes("preview_image_url") &&
+    (msg.includes("does not exist") || msg.includes("could not find"));
+  if (missingCol && "preview_image_url" in row) {
+    const { data: fbData, error: fbErr } = await supabase
+      .from("product_sets")
+      .insert(baseRow)
+      .select()
+      .single();
+    if (fbErr) throw fbErr;
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[calyx] saveSet: preview_image_url column missing on product_sets — " +
+        "run `ALTER TABLE product_sets ADD COLUMN preview_image_url TEXT;` " +
+        "to enable render-state slot thumbnails."
+    );
+    return fbData as ProductSet;
+  }
+  throw error;
 }

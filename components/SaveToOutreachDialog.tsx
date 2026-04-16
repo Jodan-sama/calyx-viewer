@@ -7,7 +7,7 @@ import {
   listSetsForBrand,
   saveSet,
 } from "@/lib/brands";
-import { uploadLabel, supabaseConfigured } from "@/lib/supabase";
+import { uploadLabel, uploadPreview, supabaseConfigured } from "@/lib/supabase";
 import type { Brand, ProductSet, ProductSetKind, SceneEnvironment } from "@/lib/types";
 import type { BagMaterial } from "@/lib/bagMaterial";
 
@@ -27,8 +27,45 @@ export type SaveSource =
       material: BagMaterial;
       productType?: ProductSet["product_type"];
       environment?: SceneEnvironment;
+      /** Data URL of the current 3D viewer screenshot (PNG). When
+       *  provided the dialog downscales it to ~400px JPEG and saves it
+       *  as the slot's `preview_image_url`, so the slot picker thereafter
+       *  shows the rendered packaging (materials + lighting + env)
+       *  instead of the raw label artwork. Optional — absent → the
+       *  label image doubles as the thumbnail, same as before. */
+      previewDataUrl?: string;
     }
   | { kind: "flat-image"; blob: Blob; filename: string };
+
+/** Downscale a PNG data URL to a small JPEG blob suitable for use as a
+ *  slot-picker thumbnail. Caps the longest edge at `maxDim` and
+ *  re-encodes at `quality` — typically lands well under 50KB. Runs in
+ *  the browser; no-op (returns null) in environments without a DOM. */
+async function downsampleToJpegBlob(
+  dataUrl: string,
+  maxDim = 400,
+  quality = 0.78
+): Promise<Blob | null> {
+  if (typeof document === "undefined") return null;
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = reject;
+    el.src = dataUrl;
+  });
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(img, 0, 0, w, h);
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+  });
+}
 
 type Props = {
   source: SaveSource | null;
@@ -152,6 +189,31 @@ export default function SaveToOutreachDialog({
 
         const label_image_url = await uploadLabel(blob, brand.slug, filename);
 
+        // Upload a downscaled 3D render preview when one was provided.
+        // For flat-image sources there's nothing to downscale (the blob
+        // IS the final image), and for 3D sources where the viewer
+        // hasn't captured yet, we skip — saveSet falls back to using
+        // the label image as the thumbnail. Any failure here is
+        // non-fatal — the main save still succeeds without a preview.
+        let preview_image_url: string | undefined = undefined;
+        if (source.kind === "bag-3d" && source.previewDataUrl) {
+          try {
+            const previewBlob = await downsampleToJpegBlob(
+              source.previewDataUrl
+            );
+            if (previewBlob) {
+              preview_image_url = await uploadPreview(
+                previewBlob,
+                brand.slug,
+                "render.jpg"
+              );
+            }
+          } catch (pe) {
+            // eslint-disable-next-line no-console
+            console.warn("[calyx] preview upload failed — continuing without:", pe);
+          }
+        }
+
         const set = await saveSet({
           brand_id: brand.id,
           section,
@@ -162,6 +224,7 @@ export default function SaveToOutreachDialog({
           label_image_url,
           material: source.kind === "bag-3d" ? source.material : null,
           environment: source.kind === "bag-3d" ? source.environment ?? "default" : "default",
+          preview_image_url,
         });
         onSaved?.(set);
         onClose();
@@ -341,9 +404,14 @@ export default function SaveToOutreachDialog({
                 >
                   {occupied ? (
                     <>
+                      {/* Prefer the 3D-render preview so the user sees
+                          the actual rendered packaging with materials,
+                          lighting, and environment applied — not just
+                          the flat label artwork. Older slots without a
+                          preview fall back to the label image. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={occupied.label_image_url}
+                        src={occupied.preview_image_url ?? occupied.label_image_url}
                         alt={occupied.title}
                         className="absolute inset-0 w-full h-full object-cover"
                         draggable={false}

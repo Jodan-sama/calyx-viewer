@@ -31,18 +31,25 @@ function ScreenshotCapture({
 }: {
   onCapture: (url: string) => void;
   resetKey: string;
-  captureRef?: React.MutableRefObject<(() => void) | null>;
+  /** Imperative capture trigger. Returns the freshly-captured data URL
+   *  so callers can grab the newest frame synchronously without waiting
+   *  for the React `onCapture` state update to flush. */
+  captureRef?: React.MutableRefObject<(() => string | null) | null>;
 }) {
   const { gl } = useThree();
   const done = useRef(false);
   const frameCount = useRef(0);
 
-  // Expose an imperative capture function for the "Update" button
+  // Expose an imperative capture function. The return value lets the
+  // caller read the data URL in the same tick that the click was
+  // received — critical for the Save-to-Outreach flow where we pass
+  // the URL into a state update on the very next line.
   useEffect(() => {
     if (captureRef) {
       captureRef.current = () => {
         const url = gl.domElement.toDataURL("image/png");
         onCapture(url);
+        return url;
       };
     }
   }, [gl, captureRef, onCapture]);
@@ -226,7 +233,7 @@ interface BagViewerProps {
   /** Optional Layer 3 back artwork (bag mode). Null → no Layer 3 back. */
   layer3BackTextureUrl?: string | null;
   onScreenshot?: (url: string) => void;
-  captureRef?: React.MutableRefObject<(() => void) | null>;
+  captureRef?: React.MutableRefObject<(() => string | null) | null>;
   onMaterialChange?: (material: BagMaterial) => void;
   /** Called when the user flips the Model dropdown between bag/jar so the
    *  parent page can re-label upload buttons etc. */

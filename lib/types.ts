@@ -34,6 +34,17 @@ export type ProductSet = {
   material: BagMaterial | null;
   /** Scene environment saved at preview time. Null / missing → "default". */
   environment: SceneEnvironment | null;
+  /** Downscaled screenshot of the rendered 3D viewer taken at save time.
+   *  Used as the slot-picker thumbnail in the save dialog so users can
+   *  see the final rendered product (materials + lighting + env) rather
+   *  than just the raw artwork. Optional for backwards-compatibility
+   *  with slots saved before this column existed — the picker falls
+   *  back to `label_image_url` when null.
+   *
+   *  Requires a one-time migration on the Supabase `product_sets` table:
+   *    ALTER TABLE product_sets ADD COLUMN preview_image_url TEXT;
+   */
+  preview_image_url: string | null;
   created_at: string;
 };
 

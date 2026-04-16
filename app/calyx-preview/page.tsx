@@ -108,7 +108,7 @@ export default function CalyxPreview() {
   const [magicError, setMagicError] = useState<string | null>(null);
   const [saveSource, setSaveSource] = useState<SaveSource | null>(null);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
-  const captureRef = useRef<(() => void) | null>(null);
+  const captureRef = useRef<(() => string | null) | null>(null);
   // Live material config — kept up to date by BagViewer's Leva controls
   const materialRef = useRef<BagMaterial>(DEFAULT_MATERIAL);
   const handleMaterialChange = useCallback((m: BagMaterial) => {
@@ -468,8 +468,15 @@ export default function CalyxPreview() {
 
           {/* Save label as 3D bag — always visible, disabled until a front upload */}
           <button
-            onClick={() =>
-              frontFile &&
+            onClick={() => {
+              if (!frontFile) return;
+              // Trigger a fresh canvas capture so the thumbnail reflects
+              // the latest Leva changes, not a stale auto-capture from
+              // the initial mount. The capture function returns the
+              // data URL synchronously (setState hasn't flushed yet),
+              // so we prefer that over `screenshotUrl` which might
+              // still hold an older frame.
+              const fresh = captureRef.current?.() ?? null;
               setSaveSource({
                 kind: "bag-3d",
                 file: frontFile,
@@ -477,8 +484,13 @@ export default function CalyxPreview() {
                 productType:
                   currentModel === "jar" ? "supplement-jar" : "mylar-bag",
                 environment: currentEnvironment,
-              })
-            }
+                // Pass the rendered screenshot so the save dialog can
+                // stash a downscaled thumbnail alongside the slot. The
+                // dialog is tolerant of undefined here (skips preview
+                // upload gracefully).
+                previewDataUrl: fresh ?? screenshotUrl ?? undefined,
+              });
+            }}
             disabled={!frontFile}
             title={
               frontFile
