@@ -288,6 +288,12 @@ export default function SupplementJarMesh({
         iridescence,
         iridescenceIOR,
         iridescenceThicknessRange,
+        // Push the label slightly toward the camera so it always renders
+        // in front of the dark plastic body sitting directly underneath —
+        // prevents z-fighting artifacts (dark stripes at glancing angles).
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -299,6 +305,9 @@ export default function SupplementJarMesh({
       roughness: 0.0,
       envMapIntensity: FOIL_ENV_BASE,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
@@ -339,6 +348,9 @@ export default function SupplementJarMesh({
       roughness: 0.0,
       envMapIntensity: CHROME_ENV_BASE,
       side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;

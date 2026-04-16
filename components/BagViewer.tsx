@@ -562,10 +562,13 @@ export default function BagViewer({
         ) : (
           <SupplementJarMesh
             // Layer 1 — base label material. Identical to bag's Surface.
+            // Uses the preset-resolved values (bagProps) so matte/gloss/satin
+            // read correctly — the raw Leva metalness/roughness only apply
+            // when finish === "custom".
             finish={finish as BagFinish}
             labelColor={bagColor}
-            metalness={metalness}
-            roughness={roughness}
+            metalness={bagProps.metalness}
+            roughness={bagProps.roughness}
             iridescence={preset?.iridescence ?? 0}
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
