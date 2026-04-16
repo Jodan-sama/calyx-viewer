@@ -158,7 +158,11 @@ function buildHolographicTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-useGLTF.preload("/mylar_bag.glb");
+// Draco-compressed (7.4 MB → 418 KB). The `true` second arg turns on
+// drei's built-in DRACOLoader; the decoder wasm + JS are fetched once
+// from www.gstatic.com/draco/ (cached across the session) and shared
+// with every other useGLTF(url, true) call in the app.
+useGLTF.preload("/mylar_bag.glb", true);
 
 // ── Label geometry extractor ─────────────────────────────────────────────────
 // Collects every mesh triangle under the bag root, normalises vertex
@@ -340,7 +344,7 @@ export default function BagMesh({
   const decalDirty = useRef(true);
 
   // ── Scene ──────────────────────────────────────────────────────────────────
-  const { scene } = useGLTF("/mylar_bag.glb") as { scene: THREE.Group };
+  const { scene } = useGLTF("/mylar_bag.glb", true) as { scene: THREE.Group };
 
   const holographicTex = useMemo(() => buildHolographicTexture(), []);
 

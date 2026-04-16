@@ -5,9 +5,14 @@
  */
 
 /** Default artwork rendered on the bag when no user upload is provided.
- *  Both URLs are public static assets, safe to use server- or client-side. */
-export const DEFAULT_FRONT_TEXTURE = "/images/calyx-bag-front.png";
-export const DEFAULT_BACK_TEXTURE = "/images/calyx-bag-back.png";
+ *  Both URLs are public static assets, safe to use server- or client-side.
+ *
+ *  These ship as lossless WebP — pixel-identical to the original PNGs
+ *  but 77–80% smaller (700KB → 180KB for the pair). All modern browsers
+ *  decode WebP, and three.js' TextureLoader routes them through the
+ *  same canvas pipeline as PNG so the alpha channel is preserved. */
+export const DEFAULT_FRONT_TEXTURE = "/images/calyx-bag-front.webp";
+export const DEFAULT_BACK_TEXTURE = "/images/calyx-bag-back.webp";
 
 export type BagFinish =
   | "metallic"

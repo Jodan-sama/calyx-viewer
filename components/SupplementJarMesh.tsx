@@ -16,8 +16,11 @@ import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
 // the other is the standalone label geometry the modeller ships for Layer 1.
 const JAR_BODY_GLB = "/models/supplement-circle.glb";
 const JAR_LABEL_GLB = "/models/supplement-circle-label.glb";
-useGLTF.preload(JAR_BODY_GLB);
-useGLTF.preload(JAR_LABEL_GLB);
+// Both assets are Draco-compressed (832 KB → 222 KB body, 59 KB → 16 KB
+// label). The `true` flag enables drei's built-in DRACOLoader — decoder
+// blobs are fetched once and shared with BagMesh's mylar-bag load.
+useGLTF.preload(JAR_BODY_GLB, true);
+useGLTF.preload(JAR_LABEL_GLB, true);
 
 // Base env-map intensities (mirroring BagMesh so the jar's label reads the
 // scene with the same punch the bag does). `envIntensityScale` multiplies in.
@@ -330,18 +333,25 @@ export default function SupplementJarMesh({
   envIntensityScale = 1,
   floating = true,
 }: SupplementJarMeshProps) {
-  const { scene: bodyScene } = useGLTF(JAR_BODY_GLB) as { scene: THREE.Group };
-  const { scene: labelScene } = useGLTF(JAR_LABEL_GLB) as { scene: THREE.Group };
+  const { scene: bodyScene } = useGLTF(JAR_BODY_GLB, true) as { scene: THREE.Group };
+  const { scene: labelScene } = useGLTF(JAR_LABEL_GLB, true) as { scene: THREE.Group };
 
   // ── Plastic body/lid material ─────────────────────────────────────────────
+  // Tuned for matte black supplement-jar plastic: base roughness lifted
+  // (0.32 → 0.62) so the diffuse response reads as a softer, flatter
+  // surface, and the clearcoat is pulled way back (0.8 → 0.25 strength,
+  // 0.18 → 0.55 rough) so there's just a whisper of a polished top-coat
+  // rather than a piano-gloss shine. Base colour nudged up one notch
+  // (#141414 → #181818) so the highlights still read against the
+  // studio HDRI without looking chalky.
   const plasticMat = useMemo(
     () =>
       new THREE.MeshPhysicalMaterial({
-        color: "#141414",
-        metalness: 0.1,
-        roughness: 0.32,
-        clearcoat: 0.8,
-        clearcoatRoughness: 0.18,
+        color: "#181818",
+        metalness: 0.08,
+        roughness: 0.62,
+        clearcoat: 0.25,
+        clearcoatRoughness: 0.55,
         envMapIntensity: PLASTIC_ENV_BASE,
       }),
     []
