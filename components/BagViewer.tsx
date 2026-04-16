@@ -234,6 +234,17 @@ interface BagViewerProps {
   /** Called when the user changes the Environment dropdown (default/smoke/dim)
    *  so the parent can include the current environment in saves. */
   onEnvironmentChange?: (env: "default" | "smoke" | "dim") => void;
+  /** Optional Leva-defaults seed. Used when the page hydrates from a saved
+   *  Outreach slot (Calyx Preview opened via `?open=<id>`) — the material,
+   *  environment, and model fields pre-populate the Leva controls so the
+   *  viewer boots in the same state the user saw at save time.
+   *
+   *  Leva only reads field `value` on first mount, so the parent must force
+   *  a remount (via a `key` that changes once hydration completes) for
+   *  these to take effect. Pass `undefined` to use the regular defaults. */
+  initialMaterial?: BagMaterial;
+  initialEnvironment?: "default" | "smoke" | "dim";
+  initialModel?: "bag" | "jar";
 }
 
 export default function BagViewer({
@@ -246,7 +257,19 @@ export default function BagViewer({
   onMaterialChange,
   onModelChange,
   onEnvironmentChange,
+  initialMaterial,
+  initialEnvironment,
+  initialModel,
 }: BagViewerProps) {
+  // Resolved initial values for the Leva schema below. Consulted once at
+  // mount — if the page supplies an initialMaterial (e.g. opened from an
+  // Outreach slot), these prefill the controls; otherwise the hard-coded
+  // defaults take over. Parent forces a remount via a `key` prop when
+  // hydration data arrives, so changing initial* mid-session works.
+  const iMat = initialMaterial;
+  const iEnv = initialEnvironment ?? "default";
+  const iModel = initialModel ?? "bag";
+  const iActiveLayer = "layer1";
   const {
     model,
     activeLayer,
@@ -262,7 +285,7 @@ export default function BagViewer({
     Model: folder({
       model: {
         label: "Model",
-        value: "bag",
+        value: iModel,
         options: {
           "Mylar Bag": "bag",
           "Supplement Jar": "jar",
@@ -276,7 +299,7 @@ export default function BagViewer({
       // artwork layer.
       activeLayer: {
         label: "Active Layer",
-        value: "layer1",
+        value: iActiveLayer,
         options: {
           "Layer 1 — Material": "layer1",
           "Layer 2": "layer2",
@@ -290,7 +313,7 @@ export default function BagViewer({
       // hidden when the user is editing Layer 2 or Layer 3.
       finish: {
         label: "Finish",
-        value: "metallic",
+        value: iMat?.finish ?? "metallic",
         options: {
           Metallic: "metallic",
           Matte: "matte",
@@ -304,19 +327,19 @@ export default function BagViewer({
         render: (get) => get("Model.activeLayer") === "layer1",
       },
       metalness: {
-        label: "Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        label: "Metalness", value: iMat?.metalness ?? 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.activeLayer") === "layer1" &&
           get("Surface.finish") === "custom",
       },
       roughness: {
-        label: "Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        label: "Roughness", value: iMat?.roughness ?? 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.activeLayer") === "layer1" &&
           get("Surface.finish") === "custom",
       },
       bagColor: {
-        label: "Bag Color", value: "#c4cdd8",
+        label: "Bag Color", value: iMat?.bagColor ?? "#c4cdd8",
         render: (get) => get("Model.activeLayer") === "layer1",
       },
     }, { collapsed: false }),
@@ -326,7 +349,7 @@ export default function BagViewer({
       // Jar uses its own `layer2*` sliders below so each model's settings
       // persist independently across model switches.
       labelMetalness: {
-        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
+        label: "Metalness", value: iMat?.labelMetalness ?? 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2" &&
@@ -334,7 +357,7 @@ export default function BagViewer({
           !get("Layer 2.labelMaterial"),
       },
       labelRoughness: {
-        label: "Roughness", value: 0.55, min: 0, max: 1, step: 0.01,
+        label: "Roughness", value: iMat?.labelRoughness ?? 0.55, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2" &&
@@ -342,14 +365,14 @@ export default function BagViewer({
           !get("Layer 2.labelMaterial"),
       },
       labelVarnish: {
-        label: "Varnish", value: false,
+        label: "Varnish", value: iMat?.labelVarnish ?? false,
         render: (get) =>
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2" &&
           !get("Layer 2.labelMaterial"),
       },
       labelMaterial: {
-        label: "Material", value: false,
+        label: "Material", value: iMat?.labelMaterial ?? false,
         render: (get) =>
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2",
@@ -358,7 +381,7 @@ export default function BagViewer({
       // Material checkbox above is on — picks what substance the artwork
       // mask paints with, independently of Layer 1's finish.
       labelMatFinish: {
-        label: "Layer Finish", value: "metallic",
+        label: "Layer Finish", value: iMat?.labelMatFinish ?? "metallic",
         options: {
           Metallic: "metallic",
           Matte: "matte",
@@ -375,7 +398,7 @@ export default function BagViewer({
           get("Layer 2.labelMaterial"),
       },
       labelMatMetalness: {
-        label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        label: "Layer Metalness", value: iMat?.labelMatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2" &&
@@ -383,7 +406,7 @@ export default function BagViewer({
           get("Layer 2.labelMatFinish") === "custom",
       },
       labelMatRoughness: {
-        label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        label: "Layer Roughness", value: iMat?.labelMatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2" &&
@@ -524,7 +547,7 @@ export default function BagViewer({
     Scene: folder({
       autoRotate: { label: "Auto Rotate", value: false },
       lighting: {
-        label: "Lighting", value: "studio",
+        label: "Lighting", value: iMat?.lighting ?? "studio",
         options: { Studio: "studio", Warehouse: "warehouse", City: "city", Forest: "forest", Sunset: "sunset", Rave: "rave" },
       },
     }, { collapsed: true }),
@@ -532,7 +555,7 @@ export default function BagViewer({
     Environment: folder({
       environment: {
         label: "Scene",
-        value: "default",
+        value: iEnv,
         options: { Default: "default", Smoke: "smoke", Dim: "dim" },
       },
     }, { collapsed: false }),

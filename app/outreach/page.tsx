@@ -8,6 +8,7 @@ import {
   listSetsForBrand,
   updateBrandColors,
   updateBrandLogo,
+  updateSetTitle,
 } from "@/lib/brands";
 import { supabaseConfigured, uploadBrandLogo } from "@/lib/supabase";
 import type { Brand, ProductSet } from "@/lib/types";
@@ -83,6 +84,26 @@ export default function Outreach() {
     setClientVersion(0);
     setCopied(false);
   }, []);
+
+  // Inline title-edit on a hero 3D slot. Patches Supabase, then mirrors the
+  // change into local state so the bottom title bar picks it up without a
+  // full listSetsForBrand refetch. Any error surfaces through the page-
+  // level `err` banner so users see why a rename didn't stick.
+  const handleTitleChange = useCallback(
+    async (setId: string, nextTitle: string) => {
+      try {
+        const updated = await updateSetTitle(setId, nextTitle);
+        setSets((prev) =>
+          prev.map((s) => (s.id === setId ? { ...s, title: updated.title } : s))
+        );
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : "Title save failed");
+        // Re-throw so the slot's inline editor reverts to server truth.
+        throw e;
+      }
+    },
+    []
+  );
 
   const heroBySlot = useMemo(() => {
     const map = new Map<number, ProductSet>();
@@ -362,6 +383,12 @@ export default function Outreach() {
                   index={i}
                   set={heroBySlot.get(i)}
                   onOpenImage={(src, alt) => setPreview({ src, alt })}
+                  // Admin chrome (inline title edit + "Open in Preview"
+                  // launcher) only on /outreach. /client/[slug] renders
+                  // the same slot component without these props so the
+                  // client view stays read-only.
+                  isAdmin
+                  onTitleChange={handleTitleChange}
                 />
               ))}
             </div>

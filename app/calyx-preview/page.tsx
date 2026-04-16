@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Leva } from "leva";
 import SaveToOutreachDialog, {
   type SaveSource,
@@ -15,6 +15,8 @@ import {
   DEFAULT_MATERIAL,
   type BagMaterial,
 } from "@/lib/bagMaterial";
+import { getSetById } from "@/lib/brands";
+import type { SceneEnvironment } from "@/lib/types";
 
 // Shared theme for the docked Leva panel — matches the rest of the UI chrome.
 const LEVA_THEME = {
@@ -81,6 +83,25 @@ export default function CalyxPreview() {
   // Active environment — tracked so saves capture the scene layout at save time.
   const [currentEnvironment, setCurrentEnvironment] = useState<"default" | "smoke" | "dim">("default");
 
+  // ── Hydration from a saved Outreach slot (`?open=<set-id>`) ───────────────
+  // When the user clicks "Open in Preview" on an Outreach hero slot we
+  // re-enter this page with the set id in the URL. We fetch the set,
+  // seed texture URLs + material + environment + model state, then mount
+  // BagViewer with those values baked into Leva's defaults.
+  //
+  // Leva only reads `value` at first mount, so we bump `hydrationKey`
+  // when the fetch completes — that forces BagViewer to remount with
+  // the new initial values. `hydrating` guards the viewer so it doesn't
+  // flash with defaults before the server data arrives.
+  const [hydrating, setHydrating] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).has("open");
+  });
+  const [hydrationKey, setHydrationKey] = useState(0);
+  const [initialMaterial, setInitialMaterial] = useState<BagMaterial | undefined>(undefined);
+  const [initialEnvironment, setInitialEnvironment] = useState<SceneEnvironment | undefined>(undefined);
+  const [initialModel, setInitialModel] = useState<"bag" | "jar" | undefined>(undefined);
+
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [magicImageUrl, setMagicImageUrl] = useState<string | null>(null);
   const [isMakingMagic, setIsMakingMagic] = useState(false);
@@ -92,6 +113,65 @@ export default function CalyxPreview() {
   const materialRef = useRef<BagMaterial>(DEFAULT_MATERIAL);
   const handleMaterialChange = useCallback((m: BagMaterial) => {
     materialRef.current = m;
+  }, []);
+
+  // Read `?open=<set-id>` once on mount and hydrate state from the saved
+  // slot. Everything here is optional — if the param isn't present, the
+  // page boots with the hard-coded defaults, same as before. `cancelled`
+  // guards against the tab closing mid-fetch.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get("open");
+    if (!openId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const set = await getSetById(openId);
+        if (cancelled || !set) {
+          setHydrating(false);
+          return;
+        }
+        // Seed the artwork URLs so both BagMesh's Layer 2 front and Layer 3
+        // (jar) pick up the saved label. The back texture is deliberately
+        // left at its current default — saves only persist one image today.
+        setFrontTextureUrl(set.label_image_url);
+        setFrontFileName(set.title);
+        // Pretend the fetched image is also the "frontFile" so "Save to
+        // Outreach" stays enabled from the outset. The blob download is
+        // deferred until the user clicks save (handled in handleSubmit).
+        try {
+          const res = await fetch(set.label_image_url);
+          const blob = await res.blob();
+          if (cancelled) return;
+          const file = new File([blob], set.title || "artwork.png", {
+            type: blob.type || "image/png",
+          });
+          setFrontFile(file);
+        } catch {
+          /* non-fatal — save button just stays disabled until user uploads */
+        }
+
+        // Push resolved state into Leva defaults via BagViewer props, then
+        // bump the key so the viewer remounts and Leva picks them up.
+        setInitialMaterial(set.material ?? undefined);
+        setInitialEnvironment(set.environment ?? "default");
+        setInitialModel(
+          set.product_type === "supplement-jar" ? "jar" : "bag"
+        );
+        setCurrentModel(
+          set.product_type === "supplement-jar" ? "jar" : "bag"
+        );
+        setCurrentEnvironment(set.environment ?? "default");
+        setHydrationKey((k) => k + 1);
+        setHydrating(false);
+      } catch {
+        if (!cancelled) setHydrating(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_AI_API_KEY ?? "";
@@ -479,17 +559,34 @@ export default function CalyxPreview() {
 
         {/* 3D Canvas */}
         <div className="flex-1 min-w-0 h-full relative">
-          <BagViewer
-            textureUrl={frontTextureUrl}
-            backTextureUrl={backTextureUrl}
-            layer3FrontTextureUrl={layer3FrontTextureUrl}
-            layer3BackTextureUrl={layer3BackTextureUrl}
-            onScreenshot={setScreenshotUrl}
-            captureRef={captureRef}
-            onMaterialChange={handleMaterialChange}
-            onModelChange={setCurrentModel}
-            onEnvironmentChange={setCurrentEnvironment}
-          />
+          {hydrating ? (
+            <div className="flex items-center justify-center w-full h-full bg-[#f0f2f7]">
+              <div className="text-center space-y-3">
+                <div className="w-9 h-9 border-2 border-[#0033A1] border-t-transparent rounded-full animate-spin mx-auto" />
+                <p className="text-[#272724]/40 text-sm font-light">Loading saved slot…</p>
+              </div>
+            </div>
+          ) : (
+            <BagViewer
+              // Remount whenever hydration fires so Leva picks up the
+              // freshly-seeded initial values. For the default path
+              // (hydrationKey stays 0) this is a stable key and behaves
+              // exactly like before.
+              key={hydrationKey}
+              textureUrl={frontTextureUrl}
+              backTextureUrl={backTextureUrl}
+              layer3FrontTextureUrl={layer3FrontTextureUrl}
+              layer3BackTextureUrl={layer3BackTextureUrl}
+              onScreenshot={setScreenshotUrl}
+              captureRef={captureRef}
+              onMaterialChange={handleMaterialChange}
+              onModelChange={setCurrentModel}
+              onEnvironmentChange={setCurrentEnvironment}
+              initialMaterial={initialMaterial}
+              initialEnvironment={initialEnvironment}
+              initialModel={initialModel}
+            />
+          )}
           {/* Bottom hint sits over the canvas */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[10px] font-light tracking-[0.18em] uppercase pointer-events-none select-none text-[#272724]/25">
             Drag to rotate · Scroll to zoom

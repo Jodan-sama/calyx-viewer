@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getOrCreateBrand,
   listBrands,
+  listSetsForBrand,
   saveSet,
 } from "@/lib/brands";
 import { uploadLabel, supabaseConfigured } from "@/lib/supabase";
@@ -63,10 +64,28 @@ export default function SaveToOutreachDialog({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Existing sets for the currently-selected brand, indexed by
+  // "<section>:<slot>" so the slot grid can render each button with a
+  // live thumbnail of whatever is already occupying that cell. Prevents
+  // accidental overwrites by making "this slot is already taken" visible
+  // before the save button is clicked.
+  const [existingSets, setExistingSets] = useState<ProductSet[]>([]);
+
   const kind: ProductSetKind = source?.kind ?? "bag-3d";
   const section: "hero" | "gallery" =
     kind === "flat-image" ? "gallery" : "hero";
   const maxSlot = section === "hero" ? 3 : 8;
+
+  // Map existing sets in the active section to their slot number so the
+  // grid can look them up in O(1). Keyed inside the dialog by section so
+  // flat-image vs 3D slots never collide.
+  const occupiedBySlot = useMemo(() => {
+    const map = new Map<number, ProductSet>();
+    for (const s of existingSets) {
+      if (s.section === section) map.set(s.slot, s);
+    }
+    return map;
+  }, [existingSets, section]);
 
   useEffect(() => {
     if (!supabaseConfigured) {
@@ -82,6 +101,32 @@ export default function SaveToOutreachDialog({
       .catch((e) => setErr(e.message))
       .finally(() => setLoadingBrands(false));
   }, []);
+
+  // Re-fetch the selected brand's existing sets whenever the active brand
+  // (or mode) changes, so the slot grid's thumbnails always reflect the
+  // live state of that brand's Outreach page. `cancelled` prevents races
+  // if the user flips brands quickly. We deliberately skip the fetch
+  // when the user is creating a new brand — a brand-new brand can't
+  // have any existing sets.
+  useEffect(() => {
+    if (!supabaseConfigured) return;
+    if (brandMode !== "existing" || !selectedBrandId) {
+      setExistingSets([]);
+      return;
+    }
+    let cancelled = false;
+    listSetsForBrand(selectedBrandId)
+      .then((sets) => {
+        if (!cancelled) setExistingSets(sets);
+      })
+      .catch(() => {
+        // Swallow — showing the dialog without thumbnails is still useful.
+        if (!cancelled) setExistingSets([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [brandMode, selectedBrandId]);
 
   const canSubmit =
     !!source &&
@@ -260,7 +305,12 @@ export default function SaveToOutreachDialog({
           )}
         </div>
 
-        {/* Slot */}
+        {/* Slot picker — each cell shows a live thumbnail of whatever is
+            already in that slot so the user can see what they'd overwrite.
+            For 3D (bag-3d) slots the stored `label_image_url` is the flat
+            artwork that got mapped onto the model; for flat-image slots
+            it's the final saved image. Empty cells show an unobtrusive
+            dashed placeholder with the slot number. */}
         <div className="space-y-2">
           <label className="text-[10px] font-medium tracking-[0.18em] uppercase text-[#272724]/55">
             {section === "hero" ? "Hero slot (1–3)" : "Digital Previews slot (1–8)"}
@@ -270,23 +320,68 @@ export default function SaveToOutreachDialog({
               section === "hero" ? "grid-cols-3" : "grid-cols-4"
             }`}
           >
-            {Array.from({ length: maxSlot }, (_, i) => i + 1).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSlot(s)}
-                className={`h-10 rounded-lg text-[12px] font-semibold border transition ${
-                  slot === s
-                    ? "bg-[#0033A1] text-white border-[#0033A1]"
-                    : "bg-white text-[#272724]/60 border-[#e8ecf2] hover:border-[#0033A1]/40"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+            {Array.from({ length: maxSlot }, (_, i) => i + 1).map((s) => {
+              const occupied = occupiedBySlot.get(s);
+              const selected = slot === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSlot(s)}
+                  title={
+                    occupied
+                      ? `Slot ${s}: ${occupied.title} (will be replaced)`
+                      : `Slot ${s} — empty`
+                  }
+                  className={`relative aspect-square rounded-lg overflow-hidden border transition ${
+                    selected
+                      ? "border-[#0033A1] ring-2 ring-[#0033A1]/30"
+                      : "border-[#e8ecf2] hover:border-[#0033A1]/40"
+                  } ${occupied ? "bg-[#f5f7fb]" : "bg-white"}`}
+                >
+                  {occupied ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={occupied.label_image_url}
+                        alt={occupied.title}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        draggable={false}
+                      />
+                      {/* Slot number chip — sits on top of the thumbnail
+                          so occupied slots still read their index at a
+                          glance. The semi-opaque backdrop keeps the
+                          number legible over bright artwork. */}
+                      <span
+                        className={`absolute top-1 left-1 text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          selected
+                            ? "bg-[#0033A1] text-white"
+                            : "bg-white/85 text-[#272724]"
+                        }`}
+                      >
+                        {s}
+                      </span>
+                      {selected && (
+                        <span className="absolute inset-0 bg-[#0033A1]/20 pointer-events-none" />
+                      )}
+                    </>
+                  ) : (
+                    <span
+                      className={`absolute inset-0 flex items-center justify-center text-[13px] font-semibold ${
+                        selected ? "text-[#0033A1]" : "text-[#272724]/45"
+                      }`}
+                    >
+                      {s}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           <p className="text-[10px] text-[#272724]/40">
-            Saving to an occupied slot will replace what&apos;s there.
+            {occupiedBySlot.get(slot)
+              ? `Slot ${slot} is taken — saving will replace “${occupiedBySlot.get(slot)!.title}”.`
+              : "Saving to an occupied slot will replace what's there."}
           </p>
         </div>
 

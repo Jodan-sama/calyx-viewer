@@ -96,6 +96,35 @@ export async function listSetsForBrand(
   return (data ?? []) as ProductSet[];
 }
 
+/** Fetch a single product set by id. Used when the Calyx Preview page is
+ *  opened via `?open=<id>` so it can rehydrate the viewer with the exact
+ *  material/environment/textures captured at save time. */
+export async function getSetById(id: string): Promise<ProductSet | null> {
+  const { data, error } = await getSupabase()
+    .from("product_sets")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as ProductSet) ?? null;
+}
+
+/** Patch a set's title in place. Used by the Outreach slot's inline title
+ *  editor — only admin chrome calls this. */
+export async function updateSetTitle(
+  setId: string,
+  title: string
+): Promise<ProductSet> {
+  const { data, error } = await getSupabase()
+    .from("product_sets")
+    .update({ title })
+    .eq("id", setId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ProductSet;
+}
+
 /** Upsert a set into a specific (brand, section, slot) cell. Replaces any existing row. */
 export async function saveSet(input: {
   brand_id: string;
