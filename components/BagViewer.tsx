@@ -1040,7 +1040,7 @@ export default function BagViewer({
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
             finish={finish}
-            envIntensityScale={dimScale}
+            envIntensityScale={dimScale * envIntensity}
             floating={environment !== "smoke"}
           />
         ) : (
@@ -1081,7 +1081,7 @@ export default function BagViewer({
             layer3MatFinish={layer3MatFinish as BagFinish}
             layer3MatMetalness={layer3MatMetalness}
             layer3MatRoughness={layer3MatRoughness}
-            envIntensityScale={dimScale}
+            envIntensityScale={dimScale * envIntensity}
             floating={environment !== "smoke"}
           />
         )}
