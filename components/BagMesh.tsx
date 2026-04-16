@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
+import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
 
 interface BagMeshProps {
   // ── Base surface (mylar / foil / multi-chrome / custom) ─────────────────
@@ -28,11 +29,16 @@ interface BagMeshProps {
    *  opaque. Background bag surface is unaffected. */
   labelVarnish?: boolean;
   /** When true, Layer 2's artwork alpha becomes a mask and the opaque
-   *  pixels paint with the current base-surface finish (Multi-Chrome,
-   *  Holographic Foil, Prismatic Foil, matte, etc.) rather than the
-   *  artwork's RGB values. Effectively turns the artwork into a material
-   *  cutout. Takes precedence over `labelVarnish`. */
+   *  pixels paint with the Material finish selected for *this layer* (see
+   *  `labelMatFinish`) rather than the artwork's RGB values. */
   labelMaterial?: boolean;
+  /** Per-layer Material finish for Layer 2. Falls back to Layer 1's finish
+   *  when omitted, preserving the pre-per-layer behaviour for older saves. */
+  labelMatFinish?: BagFinish;
+  /** Custom metalness for `labelMatFinish === "custom"`. */
+  labelMatMetalness?: number;
+  /** Custom roughness for `labelMatFinish === "custom"`. */
+  labelMatRoughness?: number;
 
   // ── Layer 3 — optional second artwork layer, stacked above Layer 2. ─────
   /** Layer 3 front-panel artwork. Null → Layer 3 front skipped. */
@@ -43,6 +49,12 @@ interface BagMeshProps {
   layer3Roughness?: number;
   layer3Varnish?: boolean;
   layer3Material?: boolean;
+  /** Per-layer Material finish for Layer 3. Falls back to Layer 1's finish. */
+  layer3MatFinish?: BagFinish;
+  /** Custom metalness for `layer3MatFinish === "custom"`. */
+  layer3MatMetalness?: number;
+  /** Custom roughness for `layer3MatFinish === "custom"`. */
+  layer3MatRoughness?: number;
 
   /** Multiplier applied to every material's envMapIntensity — lets the
    *  caller dim the HDRI reflections on the bag without touching the
@@ -308,12 +320,18 @@ export default function BagMesh({
   finish = "",
   labelVarnish = false,
   labelMaterial = false,
+  labelMatFinish,
+  labelMatMetalness,
+  labelMatRoughness,
   layer3FrontTextureUrl = null,
   layer3BackTextureUrl = null,
   layer3Metalness = 0.1,
   layer3Roughness = 0.5,
   layer3Varnish = false,
   layer3Material = false,
+  layer3MatFinish,
+  layer3MatMetalness,
+  layer3MatRoughness,
   envIntensityScale = 1,
   floating = true,
 }: BagMeshProps) {
@@ -909,20 +927,82 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer3BackMaskedSet = useMemo(() => buildMaskedSet(-8), []);
 
-  // Sync masked-material variants with current texture + base-surface finish.
+  // Resolve the effective Material-mode surface for a given layer. Each
+  // layer can override Layer 1's finish via `matFinish`; when omitted the
+  // layer inherits Layer 1 (backwards-compatible for older saves).
+  type LayerSurface = {
+    finish: BagFinish | string;
+    metalness: number;
+    roughness: number;
+    iridescence: number;
+    iridescenceIOR: number;
+    iridescenceThicknessRange: [number, number];
+  };
+  const resolveLayerSurface = (
+    matFinish: BagFinish | undefined,
+    matCustomMet: number | undefined,
+    matCustomRough: number | undefined
+  ): LayerSurface => {
+    if (!matFinish) {
+      return {
+        finish,
+        metalness,
+        roughness,
+        iridescence,
+        iridescenceIOR,
+        iridescenceThicknessRange,
+      };
+    }
+    if (matFinish === "custom") {
+      return {
+        finish: "custom",
+        metalness: matCustomMet ?? metalness,
+        roughness: matCustomRough ?? roughness,
+        iridescence: 0,
+        iridescenceIOR: 1.5,
+        iridescenceThicknessRange: [100, 800],
+      };
+    }
+    const preset = FINISH_PRESETS[matFinish];
+    return {
+      finish: matFinish,
+      metalness: preset.metalness,
+      roughness: preset.roughness,
+      iridescence: preset.iridescence ?? 0,
+      iridescenceIOR: preset.iridescenceIOR ?? 1.5,
+      iridescenceThicknessRange: preset.iridescenceThicknessRange ?? [100, 800],
+    };
+  };
+
+  const layer2Surface = useMemo(
+    () => resolveLayerSurface(labelMatFinish, labelMatMetalness, labelMatRoughness),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [labelMatFinish, labelMatMetalness, labelMatRoughness, finish, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange]
+  );
+  const layer3Surface = useMemo(
+    () => resolveLayerSurface(layer3MatFinish, layer3MatMetalness, layer3MatRoughness),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layer3MatFinish, layer3MatMetalness, layer3MatRoughness, finish, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange]
+  );
+
+  // Sync masked-material variants with the layer's own resolved surface.
   // The artwork texture is bound as `map` so its .a channel drives the cutout;
   // each variant's custom shader is careful to leave gl_FragColor.a alone so
   // the alphaMap chain still attenuates visibility.
-  const syncMaskedSet = (set: MaskedSet, tex: THREE.Texture | null) => {
-    // Mylar variant — mirror the base physical surface (matte/gloss/satin/etc).
+  const syncMaskedSet = (
+    set: MaskedSet,
+    tex: THREE.Texture | null,
+    surface: LayerSurface
+  ) => {
+    // Mylar variant — mirror this layer's resolved physical surface.
     set.mylar.map = tex;
     set.mylar.color.set(color);
-    set.mylar.metalness = metalness;
-    set.mylar.roughness = roughness;
-    set.mylar.iridescence = iridescence;
-    set.mylar.iridescenceIOR = iridescenceIOR;
-    set.mylar.iridescenceThicknessRange = iridescenceThicknessRange;
-    if (iridescence > 0) {
+    set.mylar.metalness = surface.metalness;
+    set.mylar.roughness = surface.roughness;
+    set.mylar.iridescence = surface.iridescence;
+    set.mylar.iridescenceIOR = surface.iridescenceIOR;
+    set.mylar.iridescenceThicknessRange = surface.iridescenceThicknessRange;
+    if (surface.iridescence > 0) {
       set.mylar.iridescenceThicknessMap = holographicTex;
       set.mylar.iridescenceThicknessRange = [0, 1200];
       set.mylar.color.set("#ffffff");
@@ -946,52 +1026,52 @@ export default function BagMesh({
   };
 
   useEffect(() => {
-    syncMaskedSet(layer2FrontMaskedSet, frontLabelTex);
+    syncMaskedSet(layer2FrontMaskedSet, frontLabelTex, layer2Surface);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frontLabelTex, color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, layer2FrontMaskedSet, holographicTex]);
+  }, [frontLabelTex, color, layer2Surface, envIntensityScale, layer2FrontMaskedSet, holographicTex]);
 
   useEffect(() => {
-    syncMaskedSet(layer2BackMaskedSet, backLabelTex);
+    syncMaskedSet(layer2BackMaskedSet, backLabelTex, layer2Surface);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backLabelTex, color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, layer2BackMaskedSet, holographicTex]);
+  }, [backLabelTex, color, layer2Surface, envIntensityScale, layer2BackMaskedSet, holographicTex]);
 
   useEffect(() => {
-    syncMaskedSet(layer3FrontMaskedSet, layer3FrontTex);
+    syncMaskedSet(layer3FrontMaskedSet, layer3FrontTex, layer3Surface);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layer3FrontTex, color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, layer3FrontMaskedSet, holographicTex]);
+  }, [layer3FrontTex, color, layer3Surface, envIntensityScale, layer3FrontMaskedSet, holographicTex]);
 
   useEffect(() => {
-    syncMaskedSet(layer3BackMaskedSet, layer3BackTex);
+    syncMaskedSet(layer3BackMaskedSet, layer3BackTex, layer3Surface);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layer3BackTex, color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, layer3BackMaskedSet, holographicTex]);
+  }, [layer3BackTex, color, layer3Surface, envIntensityScale, layer3BackMaskedSet, holographicTex]);
 
-  // Pick the active masked variant per set based on the current base finish.
-  // iridescence > 0 (Multi-Chrome preset) routes to the chrome shader.
-  const pickMasked = (set: MaskedSet): THREE.Material => {
-    if (finish === "foil") return set.foil;
-    if (finish === "prismatic") return set.prismatic;
-    if (finish === "multi-chrome" || iridescence > 0) return set.chrome;
+  // Pick the active masked variant per set based on THIS LAYER's resolved
+  // finish. iridescence > 0 (Multi-Chrome preset) routes to the chrome shader.
+  const pickMasked = (set: MaskedSet, surface: LayerSurface): THREE.Material => {
+    if (surface.finish === "foil") return set.foil;
+    if (surface.finish === "prismatic") return set.prismatic;
+    if (surface.finish === "multi-chrome" || surface.iridescence > 0) return set.chrome;
     return set.mylar;
   };
   const layer2FrontMasked = useMemo(
-    () => pickMasked(layer2FrontMaskedSet),
+    () => pickMasked(layer2FrontMaskedSet, layer2Surface),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, iridescence, layer2FrontMaskedSet]
+    [layer2Surface, layer2FrontMaskedSet]
   );
   const layer2BackMasked = useMemo(
-    () => pickMasked(layer2BackMaskedSet),
+    () => pickMasked(layer2BackMaskedSet, layer2Surface),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, iridescence, layer2BackMaskedSet]
+    [layer2Surface, layer2BackMaskedSet]
   );
   const layer3FrontMasked = useMemo(
-    () => pickMasked(layer3FrontMaskedSet),
+    () => pickMasked(layer3FrontMaskedSet, layer3Surface),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, iridescence, layer3FrontMaskedSet]
+    [layer3Surface, layer3FrontMaskedSet]
   );
   const layer3BackMasked = useMemo(
-    () => pickMasked(layer3BackMaskedSet),
+    () => pickMasked(layer3BackMaskedSet, layer3Surface),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, iridescence, layer3BackMaskedSet]
+    [layer3Surface, layer3BackMaskedSet]
   );
 
   // ── Label geometries (front + back, regenerated on decalDirty) ─────────────

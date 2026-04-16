@@ -188,6 +188,12 @@ export default function OutreachBagViewer({
       labelRoughness={mat.labelRoughness}
       labelVarnish={mat.labelVarnish ?? false}
       labelMaterial={mat.labelMaterial ?? false}
+      // Per-layer Material finish reproduces the same cutout the user saw
+      // at save time. Undefined → BagMesh falls back to Layer 1's finish,
+      // matching pre-per-layer behaviour for older saves.
+      labelMatFinish={mat.labelMatFinish}
+      labelMatMetalness={mat.labelMatMetalness}
+      labelMatRoughness={mat.labelMatRoughness}
       iridescence={iridescenceCfg?.iridescence ?? 0}
       iridescenceIOR={iridescenceCfg?.iridescenceIOR ?? 1.5}
       iridescenceThicknessRange={

@@ -253,8 +253,11 @@ export default function BagViewer({
     finish, metalness, roughness, bagColor,
     autoRotate, lighting, environment,
     labelMetalness, labelRoughness, labelVarnish, labelMaterial,
+    labelMatFinish, labelMatMetalness, labelMatRoughness,
     layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
+    layer2MatFinish, layer2MatMetalness, layer2MatRoughness,
     layer3Metalness, layer3Roughness, layer3Varnish, layer3Material,
+    layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
   } = useControls({
     Model: folder({
       model: {
@@ -319,9 +322,9 @@ export default function BagViewer({
     }, { collapsed: false }),
 
     "Layer 2": folder({
-      // Bag-only Layer 2 decal tuning (metalness / roughness). The jar's
-      // Layer 2 controls below use different state so they persist
-      // independently between model switches.
+      // Bag-only Layer 2 decal tuning (artwork-mode metalness / roughness).
+      // Jar uses its own `layer2*` sliders below so each model's settings
+      // persist independently across model switches.
       labelMetalness: {
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
@@ -351,8 +354,43 @@ export default function BagViewer({
           get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2",
       },
-      // Jar Layer 2 — artwork is the only mode now; the Material toggle
-      // routes the artwork alpha through the base-surface finish instead.
+      // Per-layer Material finish (bag Layer 2). Shown only when the
+      // Material checkbox above is on — picks what substance the artwork
+      // mask paints with, independently of Layer 1's finish.
+      labelMatFinish: {
+        label: "Layer Finish", value: "metallic",
+        options: {
+          Metallic: "metallic",
+          Matte: "matte",
+          Gloss: "gloss",
+          Satin: "satin",
+          "Holographic Foil": "foil",
+          "Prismatic Foil": "prismatic",
+          "Multi-Chrome": "multi-chrome",
+          Custom: "custom",
+        },
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.labelMaterial"),
+      },
+      labelMatMetalness: {
+        label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.labelMaterial") &&
+          get("Layer 2.labelMatFinish") === "custom",
+      },
+      labelMatRoughness: {
+        label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.labelMaterial") &&
+          get("Layer 2.labelMatFinish") === "custom",
+      },
+      // Jar Layer 2 — artwork-mode metalness / roughness / varnish.
       layer2Metalness: {
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
@@ -381,6 +419,40 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer2",
+      },
+      // Per-layer Material finish (jar Layer 2).
+      layer2MatFinish: {
+        label: "Layer Finish", value: "metallic",
+        options: {
+          Metallic: "metallic",
+          Matte: "matte",
+          Gloss: "gloss",
+          Satin: "satin",
+          "Holographic Foil": "foil",
+          "Prismatic Foil": "prismatic",
+          "Multi-Chrome": "multi-chrome",
+          Custom: "custom",
+        },
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.layer2Material"),
+      },
+      layer2MatMetalness: {
+        label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.layer2Material") &&
+          get("Layer 2.layer2MatFinish") === "custom",
+      },
+      layer2MatRoughness: {
+        label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.layer2Material") &&
+          get("Layer 2.layer2MatFinish") === "custom",
       },
     }, { collapsed: false }),
 
@@ -413,6 +485,39 @@ export default function BagViewer({
       layer3Material: {
         label: "Material", value: false,
         render: (get) => get("Model.activeLayer") === "layer3",
+      },
+      // Per-layer Material finish — revealed when the Material checkbox
+      // is on. Shared between bag and jar since Layer 3's render path is
+      // model-agnostic in this panel.
+      layer3MatFinish: {
+        label: "Layer Finish", value: "metallic",
+        options: {
+          Metallic: "metallic",
+          Matte: "matte",
+          Gloss: "gloss",
+          Satin: "satin",
+          "Holographic Foil": "foil",
+          "Prismatic Foil": "prismatic",
+          "Multi-Chrome": "multi-chrome",
+          Custom: "custom",
+        },
+        render: (get) =>
+          get("Model.activeLayer") === "layer3" &&
+          get("Layer 3.layer3Material"),
+      },
+      layer3MatMetalness: {
+        label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.activeLayer") === "layer3" &&
+          get("Layer 3.layer3Material") &&
+          get("Layer 3.layer3MatFinish") === "custom",
+      },
+      layer3MatRoughness: {
+        label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.activeLayer") === "layer3" &&
+          get("Layer 3.layer3Material") &&
+          get("Layer 3.layer3MatFinish") === "custom",
       },
     }, { collapsed: false }),
 
@@ -483,6 +588,9 @@ export default function BagViewer({
       lighting: lighting as BagLighting,
       labelVarnish,
       labelMaterial,
+      labelMatFinish: labelMatFinish as BagFinish,
+      labelMatMetalness,
+      labelMatRoughness,
     });
   }, [
     finish,
@@ -494,6 +602,9 @@ export default function BagViewer({
     lighting,
     labelVarnish,
     labelMaterial,
+    labelMatFinish,
+    labelMatMetalness,
+    labelMatRoughness,
     onMaterialChange,
   ]);
 
@@ -547,6 +658,13 @@ export default function BagViewer({
             labelRoughness={labelRoughness}
             labelVarnish={labelVarnish}
             labelMaterial={labelMaterial}
+            // Per-layer Material finish — only read when labelMaterial is on.
+            // When the user picks e.g. "Multi-Chrome" here, Layer 2's artwork
+            // alpha becomes a multi-chrome cutout regardless of Layer 1's
+            // finish. Defaults are ignored when the checkbox is off.
+            labelMatFinish={labelMatFinish as BagFinish}
+            labelMatMetalness={labelMatMetalness}
+            labelMatRoughness={labelMatRoughness}
             // Layer 3 — second artwork layer stacked on top of Layer 2.
             // Parented to the same front/back panels so uploaded art reads
             // on both sides of the bag, one polygon-offset step deeper than
@@ -557,6 +675,9 @@ export default function BagViewer({
             layer3Roughness={layer3Roughness}
             layer3Varnish={layer3Varnish}
             layer3Material={layer3Material}
+            layer3MatFinish={layer3MatFinish as BagFinish}
+            layer3MatMetalness={layer3MatMetalness}
+            layer3MatRoughness={layer3MatRoughness}
             iridescence={preset?.iridescence ?? 0}
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
@@ -589,6 +710,9 @@ export default function BagViewer({
             layer2Roughness={layer2Roughness}
             layer2Varnish={layer2Varnish}
             layer2Material={layer2Material}
+            layer2MatFinish={layer2MatFinish as BagFinish}
+            layer2MatMetalness={layer2MatMetalness}
+            layer2MatRoughness={layer2MatRoughness}
             layer3TextureUrl={
               backTextureUrl === DEFAULT_BACK_TEXTURE ? null : backTextureUrl ?? null
             }
@@ -596,6 +720,9 @@ export default function BagViewer({
             layer3Roughness={layer3Roughness}
             layer3Varnish={layer3Varnish}
             layer3Material={layer3Material}
+            layer3MatFinish={layer3MatFinish as BagFinish}
+            layer3MatMetalness={layer3MatMetalness}
+            layer3MatRoughness={layer3MatRoughness}
             envIntensityScale={dimScale}
             floating={environment !== "smoke"}
           />

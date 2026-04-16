@@ -8,7 +8,7 @@ import {
   mergeGeometries,
   mergeVertices,
 } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import type { BagFinish } from "@/lib/bagMaterial";
+import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
 
 // ── Assets ───────────────────────────────────────────────────────────────────
 // The full jar comes from two glbs: one provides the body + lid (we reuse it
@@ -94,10 +94,18 @@ interface SupplementJarMeshProps {
   /** Clear-gloss overprint on Layer 2 artwork. */
   layer2Varnish?: boolean;
   /** When true, Layer 2's artwork becomes a mask — every opaque pixel shows
-   *  the current Layer 1 Surface finish (metallic / foil / prismatic /
-   *  multi-chrome / etc.) rather than the artwork image itself. Effectively
-   *  turns the artwork into a material cutout. */
+   *  the Material finish selected for *this layer* (see `layer2MatFinish`)
+   *  rather than the artwork image itself. Effectively turns the artwork
+   *  into a material cutout. */
   layer2Material?: boolean;
+  /** Per-layer Material finish. Used only when `layer2Material` is on. If
+   *  omitted the layer falls back to Layer 1's finish — which keeps the
+   *  pre-per-layer behaviour intact for older saves. */
+  layer2MatFinish?: BagFinish;
+  /** Custom metalness for `layer2MatFinish === "custom"`. */
+  layer2MatMetalness?: number;
+  /** Custom roughness for `layer2MatFinish === "custom"`. */
+  layer2MatRoughness?: number;
 
   // ── Layer 3 — artwork decal. Clear until a texture is supplied. ─────────
   layer3TextureUrl: string | null;
@@ -108,6 +116,13 @@ interface SupplementJarMeshProps {
   /** When true, Layer 3's artwork becomes a Surface-finish cutout — same
    *  rules as `layer2Material`. */
   layer3Material?: boolean;
+  /** Per-layer Material finish for Layer 3. Falls back to Layer 1's
+   *  finish when omitted. */
+  layer3MatFinish?: BagFinish;
+  /** Custom metalness for `layer3MatFinish === "custom"`. */
+  layer3MatMetalness?: number;
+  /** Custom roughness for `layer3MatFinish === "custom"`. */
+  layer3MatRoughness?: number;
 
   /** Scene-level env dim (same prop as BagMesh). 1 = default. */
   envIntensityScale?: number;
@@ -301,11 +316,17 @@ export default function SupplementJarMesh({
   layer2Roughness,
   layer2Varnish = false,
   layer2Material = false,
+  layer2MatFinish,
+  layer2MatMetalness,
+  layer2MatRoughness,
   layer3TextureUrl,
   layer3Metalness,
   layer3Roughness,
   layer3Varnish = false,
   layer3Material = false,
+  layer3MatFinish,
+  layer3MatMetalness,
+  layer3MatRoughness,
   envIntensityScale = 1,
   floating = true,
 }: SupplementJarMeshProps) {
@@ -786,26 +807,91 @@ export default function SupplementJarMesh({
     layer2Mat.needsUpdate = true;
   }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat]);
 
+  // Resolve the effective Material-mode surface for a given layer. Each
+  // layer can override Layer 1's finish via `matFinish`; when omitted or set
+  // to undefined the layer inherits Layer 1 (backwards-compatible with saves
+  // from before per-layer finishes existed).
+  //
+  // Returns the concrete numbers used by syncMaskedSet so the consumer
+  // doesn't need to understand BagFinish at all — everything collapses to
+  // metalness / roughness / iridescence numbers that three.js can consume.
+  type LayerSurface = {
+    finish: BagFinish;
+    metalness: number;
+    roughness: number;
+    iridescence: number;
+    iridescenceIOR: number;
+    iridescenceThicknessRange: [number, number];
+  };
+  const resolveLayerSurface = (
+    matFinish: BagFinish | undefined,
+    matCustomMet: number | undefined,
+    matCustomRough: number | undefined
+  ): LayerSurface => {
+    // Null/undefined → fall back to Layer 1's already-resolved config.
+    if (!matFinish) {
+      return {
+        finish,
+        metalness,
+        roughness,
+        iridescence,
+        iridescenceIOR,
+        iridescenceThicknessRange,
+      };
+    }
+    if (matFinish === "custom") {
+      return {
+        finish: "custom",
+        metalness: matCustomMet ?? metalness,
+        roughness: matCustomRough ?? roughness,
+        iridescence: 0,
+        iridescenceIOR: 1.5,
+        iridescenceThicknessRange: [100, 800],
+      };
+    }
+    const preset = FINISH_PRESETS[matFinish];
+    return {
+      finish: matFinish,
+      metalness: preset.metalness,
+      roughness: preset.roughness,
+      iridescence: preset.iridescence ?? 0,
+      iridescenceIOR: preset.iridescenceIOR ?? 1.5,
+      iridescenceThicknessRange: preset.iridescenceThicknessRange ?? [100, 800],
+    };
+  };
+
+  const layer2Surface = useMemo(
+    () => resolveLayerSurface(layer2MatFinish, layer2MatMetalness, layer2MatRoughness),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layer2MatFinish, layer2MatMetalness, layer2MatRoughness, finish, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange]
+  );
+  const layer3Surface = useMemo(
+    () => resolveLayerSurface(layer3MatFinish, layer3MatMetalness, layer3MatRoughness),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layer3MatFinish, layer3MatMetalness, layer3MatRoughness, finish, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange]
+  );
+
   // Sync masked-material variants for each layer. The artwork texture is
   // bound as `map` (its .a channel attenuates diffuseColor.a — three's
   // built-in `alphaMap` would sample .g and misread our RGBA artwork).
   // Each variant's shader leaves gl_FragColor.a alone so the alphaMap chain
-  // produces the artwork cutout. The mylar variant picks up Layer 1's
-  // iridescence, metalness, roughness, and label colour so that e.g. a
-  // Matte Layer 1 produces a matte cutout.
+  // produces the artwork cutout. The mylar variant is tuned with the
+  // layer's own resolved surface so e.g. a layer set to Matte produces a
+  // matte cutout even if Layer 1 is Gloss.
   const syncMaskedSet = (
     set: MaskedSet,
-    tex: THREE.Texture | null
+    tex: THREE.Texture | null,
+    surface: LayerSurface
   ) => {
-    // Mylar variant — mirror Layer 1's resolved physical surface.
+    // Mylar variant — mirror this layer's resolved physical surface.
     set.mylar.map = tex;
     set.mylar.color.set(labelColor);
-    set.mylar.metalness = metalness;
-    set.mylar.roughness = roughness;
-    set.mylar.iridescence = iridescence;
-    set.mylar.iridescenceIOR = iridescenceIOR;
-    set.mylar.iridescenceThicknessRange = iridescenceThicknessRange;
-    if (iridescence > 0) {
+    set.mylar.metalness = surface.metalness;
+    set.mylar.roughness = surface.roughness;
+    set.mylar.iridescence = surface.iridescence;
+    set.mylar.iridescenceIOR = surface.iridescenceIOR;
+    set.mylar.iridescenceThicknessRange = surface.iridescenceThicknessRange;
+    if (surface.iridescence > 0) {
       set.mylar.iridescenceThicknessMap = holographicTex;
       set.mylar.iridescenceThicknessRange = [0, 1200];
       set.mylar.color.set("#ffffff");
@@ -829,55 +915,47 @@ export default function SupplementJarMesh({
   };
 
   useEffect(() => {
-    syncMaskedSet(layer2MaskedSet, layer2Tex);
+    syncMaskedSet(layer2MaskedSet, layer2Tex, layer2Surface);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     layer2Tex,
     labelColor,
-    metalness,
-    roughness,
-    iridescence,
-    iridescenceIOR,
-    iridescenceThicknessRange,
+    layer2Surface,
     envIntensityScale,
     layer2MaskedSet,
     holographicTex,
   ]);
 
   useEffect(() => {
-    syncMaskedSet(layer3MaskedSet, layer3Tex);
+    syncMaskedSet(layer3MaskedSet, layer3Tex, layer3Surface);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     layer3Tex,
     labelColor,
-    metalness,
-    roughness,
-    iridescence,
-    iridescenceIOR,
-    iridescenceThicknessRange,
+    layer3Surface,
     envIntensityScale,
     layer3MaskedSet,
     holographicTex,
   ]);
 
-  // Pick the active masked variant for each layer based on the current
-  // Layer 1 finish. Iridescence > 0 (Multi-Chrome preset) routes to the
-  // chrome shader rather than mylar so the rainbow reads properly.
-  const pickMasked = (set: MaskedSet): THREE.Material => {
-    if (finish === "foil") return set.foil;
-    if (finish === "prismatic") return set.prismatic;
-    if (finish === "multi-chrome" || iridescence > 0) return set.chrome;
+  // Pick the active masked variant for each layer based on ITS OWN finish.
+  // Iridescence > 0 (Multi-Chrome preset) routes to the chrome shader rather
+  // than mylar so the rainbow reads properly.
+  const pickMasked = (set: MaskedSet, surface: LayerSurface): THREE.Material => {
+    if (surface.finish === "foil") return set.foil;
+    if (surface.finish === "prismatic") return set.prismatic;
+    if (surface.finish === "multi-chrome" || surface.iridescence > 0) return set.chrome;
     return set.mylar;
   };
   const layer2Masked = useMemo(
-    () => pickMasked(layer2MaskedSet),
+    () => pickMasked(layer2MaskedSet, layer2Surface),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, iridescence, layer2MaskedSet]
+    [layer2Surface, layer2MaskedSet]
   );
   const layer3Masked = useMemo(
-    () => pickMasked(layer3MaskedSet),
+    () => pickMasked(layer3MaskedSet, layer3Surface),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [finish, iridescence, layer3MaskedSet]
+    [layer3Surface, layer3MaskedSet]
   );
 
   useEffect(() => {

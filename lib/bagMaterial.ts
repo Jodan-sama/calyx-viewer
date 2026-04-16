@@ -69,10 +69,18 @@ export interface BagMaterial {
    *  overprint. Optional for backwards-compatibility with existing saves. */
   labelVarnish?: boolean;
   /** When true, the label artwork's alpha is used as a mask and the opaque
-   *  pixels paint with the current base-surface finish (Multi-Chrome /
-   *  Prismatic / Foil / matte / …) instead of the artwork's RGB values.
-   *  Optional for backwards-compatibility with existing saves. */
+   *  pixels paint with the per-layer Material finish (see `labelMatFinish`
+   *  below) instead of the artwork's RGB values. Optional for backwards-
+   *  compatibility with existing saves. */
   labelMaterial?: boolean;
+  /** Per-layer Material finish for Layer 2 (the label artwork). Used only
+   *  when `labelMaterial` is true. Omitted → layer falls back to Layer 1's
+   *  finish, which matches the pre-per-layer behaviour for older saves. */
+  labelMatFinish?: BagFinish;
+  /** Custom metalness when `labelMatFinish === "custom"`. */
+  labelMatMetalness?: number;
+  /** Custom roughness when `labelMatFinish === "custom"`. */
+  labelMatRoughness?: number;
 }
 
 export const DEFAULT_MATERIAL: BagMaterial = {
