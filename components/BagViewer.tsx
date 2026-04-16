@@ -187,11 +187,11 @@ function RainbowLights() {
 }
 
 
-// Softly-polished floor used in the Smoke scene. Roughness 0.2 + metalness
-// 0.7 with mirror=1 and a moderate blur gives a strong but diffused cast
-// reflection of the bag — polished concrete / brushed chrome rather than
-// wet glass. mixStrength stays high so the reflection still reads against
-// the light floor tint.
+// High-gloss mirror floor used in the Smoke scene. Tuned for a strong,
+// clearly-readable cast reflection that picks up the object's colours and
+// highlights rather than diffusing them into a soft haze: low roughness
+// (0.05) for sharp specular, tight blur + low mixBlur so detail survives,
+// and higher mixStrength to pull the reflection above the floor tint.
 //
 // Y position sits right at the bag's bottom so the package appears to stand on
 // the plane — tight placement is what gives the base of the bag a clean cast
@@ -201,16 +201,16 @@ function ReflectiveFloor() {
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
-        blur={[90, 30]}
+        blur={[35, 12]}
         resolution={2048}
-        mixBlur={0.8}
-        mixStrength={7.0}
-        roughness={0.2}
-        depthScale={0.8}
+        mixBlur={0.25}
+        mixStrength={12.0}
+        roughness={0.05}
+        depthScale={0.6}
         minDepthThreshold={0.2}
         maxDepthThreshold={1.4}
         color="#eef1f8"
-        metalness={0.7}
+        metalness={0.9}
         mirror={1}
       />
     </mesh>
@@ -221,6 +221,10 @@ interface BagViewerProps {
   textureUrl: string | null;
   /** Back-panel artwork. Null → no back decal. */
   backTextureUrl?: string | null;
+  /** Optional Layer 3 front artwork (bag mode). Null → no Layer 3 front. */
+  layer3FrontTextureUrl?: string | null;
+  /** Optional Layer 3 back artwork (bag mode). Null → no Layer 3 back. */
+  layer3BackTextureUrl?: string | null;
   onScreenshot?: (url: string) => void;
   captureRef?: React.MutableRefObject<(() => void) | null>;
   onMaterialChange?: (material: BagMaterial) => void;
@@ -235,6 +239,8 @@ interface BagViewerProps {
 export default function BagViewer({
   textureUrl,
   backTextureUrl = null,
+  layer3FrontTextureUrl = null,
+  layer3BackTextureUrl = null,
   onScreenshot,
   captureRef,
   onMaterialChange,
@@ -246,9 +252,9 @@ export default function BagViewer({
     activeLayer,
     finish, metalness, roughness, bagColor,
     autoRotate, lighting, environment,
-    labelMetalness, labelRoughness, labelVarnish,
-    layer2Mode, layer2Metalness, layer2Roughness, layer2Varnish,
-    layer3Mode, layer3Metalness, layer3Roughness, layer3Varnish,
+    labelMetalness, labelRoughness, labelVarnish, labelMaterial,
+    layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
+    layer3Metalness, layer3Roughness, layer3Varnish, layer3Material,
   } = useControls({
     Model: folder({
       model: {
@@ -259,10 +265,12 @@ export default function BagViewer({
           "Supplement Jar": "jar",
         },
       },
-      // Jar ships with three layers: Layer 1 drives the label's base
-      // material (Finish / Color / Metalness / Roughness), Layers 2 & 3 are
-      // transparent artwork/foil decals. The dropdown routes the Material
-      // Controls panel to whichever layer is being edited.
+      // Jar + bag both ship with layered decals: Layer 1 drives the base
+      // material, Layers 2 & 3 are transparent artwork decals. The dropdown
+      // routes the Material Controls panel to whichever layer is being
+      // edited. Bag Layer 1 controls live in Surface; its Layer 2 edits the
+      // existing front/back label decals; Layer 3 adds a second stacked
+      // artwork layer.
       activeLayer: {
         label: "Active Layer",
         value: "layer1",
@@ -271,14 +279,12 @@ export default function BagViewer({
           "Layer 2": "layer2",
           "Layer 3": "layer3",
         },
-        render: (get) => get("Model.model") === "jar",
       },
     }, { collapsed: false }),
 
     Surface: folder({
-      // For the bag these controls are always visible. For the jar they
-      // apply to Layer 1 (the label's base material) and are hidden when
-      // the user is editing Layer 2 or Layer 3.
+      // Applies to Layer 1 (base material) for both bag and jar, and is
+      // hidden when the user is editing Layer 2 or Layer 3.
       finish: {
         label: "Finish",
         value: "metallic",
@@ -292,118 +298,121 @@ export default function BagViewer({
           "Multi-Chrome": "multi-chrome",
           Custom: "custom",
         },
-        render: (get) =>
-          get("Model.model") === "bag" ||
-          get("Model.activeLayer") === "layer1",
+        render: (get) => get("Model.activeLayer") === "layer1",
       },
       metalness: {
         label: "Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          (get("Model.model") === "bag" ||
-            get("Model.activeLayer") === "layer1") &&
+          get("Model.activeLayer") === "layer1" &&
           get("Surface.finish") === "custom",
       },
       roughness: {
         label: "Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          (get("Model.model") === "bag" ||
-            get("Model.activeLayer") === "layer1") &&
+          get("Model.activeLayer") === "layer1" &&
           get("Surface.finish") === "custom",
       },
       bagColor: {
         label: "Bag Color", value: "#c4cdd8",
-        render: (get) =>
-          get("Model.model") === "bag" ||
-          get("Model.activeLayer") === "layer1",
-      },
-    }, { collapsed: false }),
-
-    Label: folder({
-      // Bag-only: label decal metalness/roughness. The jar's layer decals
-      // have their own metalness/roughness inside the Layer folders.
-      labelMetalness: {
-        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.model") === "bag" && !get("Label.labelVarnish"),
-      },
-      labelRoughness: {
-        label: "Roughness", value: 0.55, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.model") === "bag" && !get("Label.labelVarnish"),
-      },
-      // Varnish — clear-gloss overprint with a subtle alpha-derived bump so
-      // artwork reads as a raised, full-gloss layer. Off by default.
-      labelVarnish: {
-        label: "Varnish", value: false,
-        render: (get) => get("Model.model") === "bag",
+        render: (get) => get("Model.activeLayer") === "layer1",
       },
     }, { collapsed: false }),
 
     "Layer 2": folder({
-      layer2Mode: {
-        label: "Mode", value: "artwork",
-        options: { Artwork: "artwork", Foil: "foil" },
+      // Bag-only Layer 2 decal tuning (metalness / roughness). The jar's
+      // Layer 2 controls below use different state so they persist
+      // independently between model switches.
+      labelMetalness: {
+        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.model") === "jar" &&
+          get("Model.model") === "bag" &&
+          get("Model.activeLayer") === "layer2" &&
+          !get("Layer 2.labelVarnish") &&
+          !get("Layer 2.labelMaterial"),
+      },
+      labelRoughness: {
+        label: "Roughness", value: 0.55, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          get("Model.activeLayer") === "layer2" &&
+          !get("Layer 2.labelVarnish") &&
+          !get("Layer 2.labelMaterial"),
+      },
+      labelVarnish: {
+        label: "Varnish", value: false,
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          get("Model.activeLayer") === "layer2" &&
+          !get("Layer 2.labelMaterial"),
+      },
+      labelMaterial: {
+        label: "Material", value: false,
+        render: (get) =>
+          get("Model.model") === "bag" &&
           get("Model.activeLayer") === "layer2",
       },
+      // Jar Layer 2 — artwork is the only mode now; the Material toggle
+      // routes the artwork alpha through the base-surface finish instead.
       layer2Metalness: {
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer2" &&
-          get("Layer 2.layer2Mode") === "artwork" &&
-          !get("Layer 2.layer2Varnish"),
+          !get("Layer 2.layer2Varnish") &&
+          !get("Layer 2.layer2Material"),
       },
       layer2Roughness: {
         label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer2" &&
-          get("Layer 2.layer2Mode") === "artwork" &&
-          !get("Layer 2.layer2Varnish"),
+          !get("Layer 2.layer2Varnish") &&
+          !get("Layer 2.layer2Material"),
       },
-      // Varnish — clear-gloss overprint on artwork. Only meaningful in
-      // artwork mode (foil is already high-gloss chrome).
       layer2Varnish: {
         label: "Varnish", value: false,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer2" &&
-          get("Layer 2.layer2Mode") === "artwork",
+          !get("Layer 2.layer2Material"),
+      },
+      layer2Material: {
+        label: "Material", value: false,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2",
       },
     }, { collapsed: false }),
 
     "Layer 3": folder({
-      layer3Mode: {
-        label: "Mode", value: "artwork",
-        options: { Artwork: "artwork", Foil: "foil" },
-        render: (get) =>
-          get("Model.model") === "jar" &&
-          get("Model.activeLayer") === "layer3",
-      },
+      // Layer 3 controls — shared naming across bag and jar because both
+      // models consume the same set of sliders (metalness / roughness /
+      // varnish / material). Bag renders Layer 3 as a second stacked
+      // artwork decal on the front + back panels; jar renders it as a
+      // second stacked artwork layer around the cylindrical label.
       layer3Metalness: {
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer3" &&
-          get("Layer 3.layer3Mode") === "artwork" &&
-          !get("Layer 3.layer3Varnish"),
+          !get("Layer 3.layer3Varnish") &&
+          !get("Layer 3.layer3Material"),
       },
       layer3Roughness: {
         label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
-          get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer3" &&
-          get("Layer 3.layer3Mode") === "artwork" &&
-          !get("Layer 3.layer3Varnish"),
+          !get("Layer 3.layer3Varnish") &&
+          !get("Layer 3.layer3Material"),
       },
       layer3Varnish: {
         label: "Varnish", value: false,
         render: (get) =>
-          get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer3" &&
-          get("Layer 3.layer3Mode") === "artwork",
+          !get("Layer 3.layer3Material"),
+      },
+      layer3Material: {
+        label: "Material", value: false,
+        render: (get) => get("Model.activeLayer") === "layer3",
       },
     }, { collapsed: false }),
 
@@ -473,6 +482,7 @@ export default function BagViewer({
       labelRoughness,
       lighting: lighting as BagLighting,
       labelVarnish,
+      labelMaterial,
     });
   }, [
     finish,
@@ -483,6 +493,7 @@ export default function BagViewer({
     labelRoughness,
     lighting,
     labelVarnish,
+    labelMaterial,
     onMaterialChange,
   ]);
 
@@ -535,6 +546,17 @@ export default function BagViewer({
             labelMetalness={labelMetalness}
             labelRoughness={labelRoughness}
             labelVarnish={labelVarnish}
+            labelMaterial={labelMaterial}
+            // Layer 3 — second artwork layer stacked on top of Layer 2.
+            // Parented to the same front/back panels so uploaded art reads
+            // on both sides of the bag, one polygon-offset step deeper than
+            // Layer 2 so the two never z-fight.
+            layer3FrontTextureUrl={layer3FrontTextureUrl}
+            layer3BackTextureUrl={layer3BackTextureUrl}
+            layer3Metalness={layer3Metalness}
+            layer3Roughness={layer3Roughness}
+            layer3Varnish={layer3Varnish}
+            layer3Material={layer3Material}
             iridescence={preset?.iridescence ?? 0}
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
@@ -555,25 +577,25 @@ export default function BagViewer({
             iridescence={preset?.iridescence ?? 0}
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
-            // Layer 2 / Layer 3 — transparent artwork/foil decals. The bag
-            // default textures are the pre-baked mylar artwork, which would
-            // look wrong scrunched around a cylinder, so we explicitly zero
-            // them out in jar mode — the decals stay clear until the user
-            // uploads something jar-appropriate.
+            // Layer 2 / Layer 3 — transparent artwork decals. The bag's
+            // default front/back textures are the pre-baked mylar artwork,
+            // which looks wrong scrunched around a cylinder, so we
+            // explicitly zero them out in jar mode — the decals stay clear
+            // until the user uploads something jar-appropriate.
             layer2TextureUrl={
               textureUrl === DEFAULT_FRONT_TEXTURE ? null : textureUrl
             }
-            layer2Mode={layer2Mode as "artwork" | "foil"}
             layer2Metalness={layer2Metalness}
             layer2Roughness={layer2Roughness}
             layer2Varnish={layer2Varnish}
+            layer2Material={layer2Material}
             layer3TextureUrl={
               backTextureUrl === DEFAULT_BACK_TEXTURE ? null : backTextureUrl ?? null
             }
-            layer3Mode={layer3Mode as "artwork" | "foil"}
             layer3Metalness={layer3Metalness}
             layer3Roughness={layer3Roughness}
             layer3Varnish={layer3Varnish}
+            layer3Material={layer3Material}
             envIntensityScale={dimScale}
             floating={environment !== "smoke"}
           />

@@ -68,6 +68,11 @@ export interface BagMaterial {
    *  alpha-derived bump so the artwork reads as a raised, high-shine
    *  overprint. Optional for backwards-compatibility with existing saves. */
   labelVarnish?: boolean;
+  /** When true, the label artwork's alpha is used as a mask and the opaque
+   *  pixels paint with the current base-surface finish (Multi-Chrome /
+   *  Prismatic / Foil / matte / …) instead of the artwork's RGB values.
+   *  Optional for backwards-compatibility with existing saves. */
+  labelMaterial?: boolean;
 }
 
 export const DEFAULT_MATERIAL: BagMaterial = {
@@ -79,6 +84,7 @@ export const DEFAULT_MATERIAL: BagMaterial = {
   labelRoughness: 0.55,
   lighting: "studio",
   labelVarnish: false,
+  labelMaterial: false,
 };
 
 /** Resolve the effective surface numbers for a material. */

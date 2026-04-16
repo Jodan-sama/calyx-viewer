@@ -76,16 +76,16 @@ function ReflectiveFloor() {
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
-        blur={[90, 30]}
+        blur={[35, 12]}
         resolution={2048}
-        mixBlur={0.8}
-        mixStrength={7.0}
-        roughness={0.2}
-        depthScale={0.8}
+        mixBlur={0.25}
+        mixStrength={12.0}
+        roughness={0.05}
+        depthScale={0.6}
         minDepthThreshold={0.2}
         maxDepthThreshold={1.4}
         color="#eef1f8"
-        metalness={0.7}
+        metalness={0.9}
         mirror={1}
       />
     </mesh>
@@ -164,15 +164,14 @@ export default function OutreachJarViewer({
       iridescenceThicknessRange={
         iridescenceCfg?.iridescenceThicknessRange ?? [100, 800]
       }
-      // The saved label image lives on Layer 2 (front artwork) of the jar.
-      // Layer 3 is the back-side artwork; both default to clear if absent so
-      // the bare label finish shows through.
+      // The saved label image lives on Layer 2 of the jar; Layer 3 is the
+      // optional second stacked artwork. Both default to clear if absent
+      // so the bare label finish shows through. Material/Varnish state
+      // isn't currently persisted per-layer, so both default to off here.
       layer2TextureUrl={textureUrl}
-      layer2Mode="artwork"
       layer2Metalness={0}
       layer2Roughness={0.5}
       layer3TextureUrl={backTextureUrl}
-      layer3Mode="artwork"
       layer3Metalness={0}
       layer3Roughness={0.5}
       envIntensityScale={dimScale}

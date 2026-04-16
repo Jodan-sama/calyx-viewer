@@ -69,6 +69,10 @@ function buildAlphaBumpTexture(src: THREE.Texture): THREE.CanvasTexture | null {
   return tex;
 }
 
+/** Kept as an exported type for backwards compatibility with existing callers;
+ *  the jar itself no longer branches on Mode — artwork decals are always
+ *  rendered as artwork, and "foil"-style masked rendering is reached via the
+ *  per-layer Material checkbox instead. */
 export type LayerMode = "artwork" | "foil";
 
 interface SupplementJarMeshProps {
@@ -83,21 +87,27 @@ interface SupplementJarMeshProps {
   iridescenceIOR?: number;
   iridescenceThicknessRange?: [number, number];
 
-  // ── Layer 2 — artwork or foil decal. Clear until a texture is supplied. ──
+  // ── Layer 2 — artwork decal. Clear until a texture is supplied. ─────────
   layer2TextureUrl: string | null;
-  layer2Mode: LayerMode;
   layer2Metalness: number;
   layer2Roughness: number;
-  /** Clear-gloss overprint on Layer 2 artwork. No-op in foil mode. */
+  /** Clear-gloss overprint on Layer 2 artwork. */
   layer2Varnish?: boolean;
+  /** When true, Layer 2's artwork becomes a mask — every opaque pixel shows
+   *  the current Layer 1 Surface finish (metallic / foil / prismatic /
+   *  multi-chrome / etc.) rather than the artwork image itself. Effectively
+   *  turns the artwork into a material cutout. */
+  layer2Material?: boolean;
 
-  // ── Layer 3 — artwork or foil decal. Clear until a texture is supplied. ──
+  // ── Layer 3 — artwork decal. Clear until a texture is supplied. ─────────
   layer3TextureUrl: string | null;
-  layer3Mode: LayerMode;
   layer3Metalness: number;
   layer3Roughness: number;
-  /** Clear-gloss overprint on Layer 3 artwork. No-op in foil mode. */
+  /** Clear-gloss overprint on Layer 3 artwork. */
   layer3Varnish?: boolean;
+  /** When true, Layer 3's artwork becomes a Surface-finish cutout — same
+   *  rules as `layer2Material`. */
+  layer3Material?: boolean;
 
   /** Scene-level env dim (same prop as BagMesh). 1 = default. */
   envIntensityScale?: number;
@@ -287,15 +297,15 @@ export default function SupplementJarMesh({
   iridescenceIOR = 1.5,
   iridescenceThicknessRange = [100, 800],
   layer2TextureUrl,
-  layer2Mode,
   layer2Metalness,
   layer2Roughness,
   layer2Varnish = false,
+  layer2Material = false,
   layer3TextureUrl,
-  layer3Mode,
   layer3Metalness,
   layer3Roughness,
   layer3Varnish = false,
+  layer3Material = false,
   envIntensityScale = 1,
   floating = true,
 }: SupplementJarMeshProps) {
@@ -551,28 +561,49 @@ export default function SupplementJarMesh({
   const layer2Mat = useMemo(() => makeDecalMat(-4), []);
   const layer3Mat = useMemo(() => makeDecalMat(-8), []);
 
-  // Layer 2 — Foil-with-artwork composite. When the user picks the "foil"
-  // mode for Layer 2 AND has uploaded artwork, we render two stacked meshes:
-  //   1. A holographic-foil chrome material whose coverage is masked by the
-  //      artwork's alpha — i.e., the foil only appears where the artwork is
-  //      solid, leaving the rest of the cylinder showing the Layer 1 finish.
-  //   2. The artwork itself at 50% opacity on top, so the underlying foil
-  //      tints through and reads as a "foiled artwork" rather than flat ink.
-  // The materials below intentionally don't clobber gl_FragColor.a in their
-  // shader injection, which lets the standard alphaMap chain mask the foil.
-  const layer2FoilMaskedMat = useMemo(() => {
-    const mat = new THREE.MeshPhysicalMaterial({
-      metalness: 1.0,
-      roughness: 0.0,
-      envMapIntensity: FOIL_ENV_BASE,
+  // ── Material-mode masked variants (Layer 2 + Layer 3) ────────────────────
+  // When a layer's Material checkbox is on, the artwork's alpha becomes a
+  // cutout mask and the revealed pixels paint with the current Layer 1
+  // finish — a metal cutout, foil cutout, prismatic cutout, etc. Each
+  // variant mirrors a Layer 1 shader but crucially does NOT clobber
+  // gl_FragColor.a, so the alphaMap chain can attenuate visibility by the
+  // uploaded artwork's alpha channel. Variants are built per layer with
+  // deeper polygonOffsets so they never z-fight Layer 2 against Layer 3.
+
+  type MaskedSet = {
+    /** Physical (metallic / matte / gloss / satin / custom) — iridescence
+     *  slots in for Multi-Chrome-ish presets when useful. */
+    mylar: THREE.MeshPhysicalMaterial;
+    /** Holographic Foil shader masked by alpha. */
+    foil: THREE.MeshPhysicalMaterial;
+    /** Prismatic Foil shader masked by alpha. */
+    prismatic: THREE.MeshPhysicalMaterial;
+    /** Multi-Chrome shader masked by alpha. */
+    chrome: THREE.MeshPhysicalMaterial;
+  };
+
+  const buildMaskedSet = (polyOffset: number): MaskedSet => {
+    const commonTransparent = {
       side: THREE.FrontSide,
       transparent: true,
       alphaTest: 0.01,
       polygonOffset: true,
-      polygonOffsetFactor: -4,
-      polygonOffsetUnits: -4,
+      polygonOffsetFactor: polyOffset,
+      polygonOffsetUnits: polyOffset,
+    };
+
+    const mylar = new THREE.MeshPhysicalMaterial({
+      envMapIntensity: MYLAR_ENV_BASE,
+      ...commonTransparent,
     });
-    mat.onBeforeCompile = (shader) => {
+
+    const foil = new THREE.MeshPhysicalMaterial({
+      metalness: 1.0,
+      roughness: 0.0,
+      envMapIntensity: FOIL_ENV_BASE,
+      ...commonTransparent,
+    });
+    foil.onBeforeCompile = (shader) => {
       shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
       shader.vertexShader = shader.vertexShader.replace(
         "#include <worldpos_vertex>",
@@ -599,30 +630,97 @@ export default function SupplementJarMesh({
         vec3 dotColor = mix(chrome, rainbow, 0.55);
         vec3 foilColor = mix(chrome, dotColor, circle * 0.80);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, foilColor, 0.85);
-        // gl_FragColor.a is intentionally NOT clobbered here — the standard
-        // alphaMap chain has already attenuated it by the artwork's alpha,
-        // and that masking is exactly what we want for the foil cutout.`
+        // gl_FragColor.a intentionally left alone — the alphaMap chain has
+        // already attenuated it by the artwork's alpha, which is the mask.`
       );
     };
-    return mat;
-  }, []);
 
-  const layer2ArtworkOverlayMat = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        metalness: 0,
-        roughness: 0.5,
-        envMapIntensity: DECAL_ENV_BASE,
-        transparent: true,
-        opacity: 0.5,
-        alphaTest: 0.01,
-        side: THREE.FrontSide,
-        polygonOffset: true,
-        polygonOffsetFactor: -8,
-        polygonOffsetUnits: -8,
-      }),
-    []
-  );
+    const prismatic = new THREE.MeshPhysicalMaterial({
+      metalness: 1.0,
+      roughness: 0.0,
+      envMapIntensity: PRISM_ENV_BASE,
+      ...commonTransparent,
+    });
+    prismatic.onBeforeCompile = (shader) => {
+      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <worldpos_vertex>",
+        `#include <worldpos_vertex>
+        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+      );
+      shader.fragmentShader =
+        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <dithering_fragment>",
+        `#include <dithering_fragment>
+        vec3 wN = normalize(vNormal);
+        vec3 vd = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
+        float ca = 0.7986;
+        float sa = 0.6018;
+        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
+                        vWorldPos.x * sa + vWorldPos.y * ca);
+        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
+        float hue = fract(
+          rot.y * 4.5 + ndv * 1.4 + wN.x * 0.35 + wN.y * 0.25
+        );
+        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        vec3 chrome = vec3(0.90, 0.93, 0.98);
+        vec3 prismBand = mix(chrome, rainbow, 0.72);
+        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.85);
+        // gl_FragColor.a left alone — alphaMap chain handles cutout.`
+      );
+    };
+
+    const chrome = new THREE.MeshPhysicalMaterial({
+      metalness: 1.0,
+      roughness: 0.0,
+      envMapIntensity: CHROME_ENV_BASE,
+      ...commonTransparent,
+    });
+    chrome.onBeforeCompile = (shader) => {
+      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <worldpos_vertex>",
+        `#include <worldpos_vertex>
+        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+      );
+      shader.fragmentShader =
+        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <dithering_fragment>",
+        `#include <dithering_fragment>
+        vec3 wN = normalize(vNormal);
+        vec3 vd = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
+        float normalHue = wN.x * 0.50 + wN.y * 0.30 + wN.z * 0.20;
+        float detail =
+          sin(vWorldPos.x * 2.2 + vWorldPos.y * 1.8) * 0.12 +
+          sin(vWorldPos.y * 1.5 - vWorldPos.z * 2.0) * 0.08;
+        float hue = fract(normalHue * 0.6 + detail + ndv * 0.35 + 0.15);
+        vec3 chrome0 = vec3(0.82, 0.87, 0.94);
+        vec3 blue   = vec3(0.30, 0.40, 0.95);
+        vec3 purple = vec3(0.58, 0.22, 0.88);
+        vec3 pink   = vec3(0.95, 0.38, 0.72);
+        vec3 palColor;
+        float t4 = hue * 4.0;
+        if (t4 < 1.0)      palColor = mix(chrome0, blue,   t4);
+        else if (t4 < 2.0) palColor = mix(blue,   purple, t4 - 1.0);
+        else if (t4 < 3.0) palColor = mix(purple, pink,   t4 - 2.0);
+        else               palColor = mix(pink,   chrome0, t4 - 3.0);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, palColor, 0.75);
+        // gl_FragColor.a left alone — alphaMap chain handles cutout.`
+      );
+    };
+
+    return { mylar, foil, prismatic, chrome };
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer2MaskedSet = useMemo(() => buildMaskedSet(-4), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3MaskedSet = useMemo(() => buildMaskedSet(-8), []);
 
   const [layer2Tex, setLayer2Tex] = useState<THREE.Texture | null>(null);
   const [layer3Tex, setLayer3Tex] = useState<THREE.Texture | null>(null);
@@ -663,21 +761,13 @@ export default function SupplementJarMesh({
     return () => { tex?.dispose(); };
   }, [layer3Tex]);
 
-  // Foil mode pins metalness/roughness to mirror-polished chrome. Artwork mode
-  // uses the per-layer controls so the designer can dial in satin vs. gloss.
-  // Varnish (artwork mode only) overrides to a glossy clearcoat overprint
-  // with a subtle alpha-derived bump — reads as a raised foil varnish layer.
+  // Layer 2 artwork material — always artwork mode. Varnish overrides to a
+  // glossy clearcoat overprint with a subtle alpha-derived bump. This
+  // material only renders when the Material checkbox is OFF; when Material
+  // is ON the mesh picks up `layer2Masked` instead.
   useEffect(() => {
     layer2Mat.map = layer2Tex;
-    const useVarnish = layer2Varnish && layer2Mode === "artwork";
-    if (layer2Mode === "foil") {
-      layer2Mat.metalness = 1.0;
-      layer2Mat.roughness = 0.05;
-      layer2Mat.clearcoat = 0;
-      layer2Mat.clearcoatRoughness = 0;
-      layer2Mat.bumpMap = null;
-      layer2Mat.bumpScale = 0;
-    } else if (useVarnish) {
+    if (layer2Varnish) {
       layer2Mat.metalness = 0;
       layer2Mat.roughness = VARNISH_ROUGHNESS;
       layer2Mat.clearcoat = VARNISH_CLEARCOAT;
@@ -694,41 +784,105 @@ export default function SupplementJarMesh({
     }
     layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer2Mat.needsUpdate = true;
-  }, [layer2Tex, layer2BumpTex, layer2Mode, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat]);
+  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat]);
 
-  // Layer 2 foil-with-artwork pair — only active when the user picks "foil"
-  // for Layer 2 AND has uploaded artwork. The artwork is bound as `map` on
-  // the foil material so its .a channel attenuates diffuseColor.a (three's
-  // built-in `alphaMap` samples .g and would misread our RGBA artwork).
-  // The shader replaces gl_FragColor.rgb with the chrome-foil pattern but
-  // leaves gl_FragColor.a alone, which is what gives us the cutout. The
-  // overlay material renders the artwork at 50% opacity on top.
+  // Sync masked-material variants for each layer. The artwork texture is
+  // bound as `map` (its .a channel attenuates diffuseColor.a — three's
+  // built-in `alphaMap` would sample .g and misread our RGBA artwork).
+  // Each variant's shader leaves gl_FragColor.a alone so the alphaMap chain
+  // produces the artwork cutout. The mylar variant picks up Layer 1's
+  // iridescence, metalness, roughness, and label colour so that e.g. a
+  // Matte Layer 1 produces a matte cutout.
+  const syncMaskedSet = (
+    set: MaskedSet,
+    tex: THREE.Texture | null
+  ) => {
+    // Mylar variant — mirror Layer 1's resolved physical surface.
+    set.mylar.map = tex;
+    set.mylar.color.set(labelColor);
+    set.mylar.metalness = metalness;
+    set.mylar.roughness = roughness;
+    set.mylar.iridescence = iridescence;
+    set.mylar.iridescenceIOR = iridescenceIOR;
+    set.mylar.iridescenceThicknessRange = iridescenceThicknessRange;
+    if (iridescence > 0) {
+      set.mylar.iridescenceThicknessMap = holographicTex;
+      set.mylar.iridescenceThicknessRange = [0, 1200];
+      set.mylar.color.set("#ffffff");
+    } else {
+      set.mylar.iridescenceThicknessMap = null;
+    }
+    set.mylar.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale;
+    set.mylar.needsUpdate = true;
+
+    set.foil.map = tex;
+    set.foil.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
+    set.foil.needsUpdate = true;
+
+    set.prismatic.map = tex;
+    set.prismatic.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
+    set.prismatic.needsUpdate = true;
+
+    set.chrome.map = tex;
+    set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
+    set.chrome.needsUpdate = true;
+  };
+
   useEffect(() => {
-    layer2FoilMaskedMat.map = layer2Tex;
-    layer2FoilMaskedMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
-    layer2FoilMaskedMat.needsUpdate = true;
-
-    layer2ArtworkOverlayMat.map = layer2Tex;
-    layer2ArtworkOverlayMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
-    layer2ArtworkOverlayMat.needsUpdate = true;
+    syncMaskedSet(layer2MaskedSet, layer2Tex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     layer2Tex,
+    labelColor,
+    metalness,
+    roughness,
+    iridescence,
+    iridescenceIOR,
+    iridescenceThicknessRange,
     envIntensityScale,
-    layer2FoilMaskedMat,
-    layer2ArtworkOverlayMat,
+    layer2MaskedSet,
+    holographicTex,
   ]);
 
   useEffect(() => {
+    syncMaskedSet(layer3MaskedSet, layer3Tex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    layer3Tex,
+    labelColor,
+    metalness,
+    roughness,
+    iridescence,
+    iridescenceIOR,
+    iridescenceThicknessRange,
+    envIntensityScale,
+    layer3MaskedSet,
+    holographicTex,
+  ]);
+
+  // Pick the active masked variant for each layer based on the current
+  // Layer 1 finish. Iridescence > 0 (Multi-Chrome preset) routes to the
+  // chrome shader rather than mylar so the rainbow reads properly.
+  const pickMasked = (set: MaskedSet): THREE.Material => {
+    if (finish === "foil") return set.foil;
+    if (finish === "prismatic") return set.prismatic;
+    if (finish === "multi-chrome" || iridescence > 0) return set.chrome;
+    return set.mylar;
+  };
+  const layer2Masked = useMemo(
+    () => pickMasked(layer2MaskedSet),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [finish, iridescence, layer2MaskedSet]
+  );
+  const layer3Masked = useMemo(
+    () => pickMasked(layer3MaskedSet),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [finish, iridescence, layer3MaskedSet]
+  );
+
+  useEffect(() => {
     layer3Mat.map = layer3Tex;
-    const useVarnish = layer3Varnish && layer3Mode === "artwork";
-    if (layer3Mode === "foil") {
-      layer3Mat.metalness = 1.0;
-      layer3Mat.roughness = 0.05;
-      layer3Mat.clearcoat = 0;
-      layer3Mat.clearcoatRoughness = 0;
-      layer3Mat.bumpMap = null;
-      layer3Mat.bumpScale = 0;
-    } else if (useVarnish) {
+    if (layer3Varnish) {
       layer3Mat.metalness = 0;
       layer3Mat.roughness = VARNISH_ROUGHNESS;
       layer3Mat.clearcoat = VARNISH_CLEARCOAT;
@@ -745,7 +899,7 @@ export default function SupplementJarMesh({
     }
     layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer3Mat.needsUpdate = true;
-  }, [layer3Tex, layer3BumpTex, layer3Mode, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat]);
+  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat]);
 
   // ── Scene processing (body + label) ───────────────────────────────────────
   // Body: hide the old glb's built-in label (any non-Plastic primitive) and
@@ -935,34 +1089,27 @@ export default function SupplementJarMesh({
         receiveShadow
       />
 
-      {/* Layer 2 — three branches:
-           • Foil mode + artwork uploaded: foil masked by artwork alpha (only
-             the artwork's solid pixels show as foil) plus the artwork itself
-             at 50% opacity on top.
-           • Artwork mode + artwork uploaded: standard transparent decal.
-           • Foil mode without artwork: nothing — the chrome would otherwise
-             cover the whole label and defeat the point of Layer 1. */}
-      {layer2Tex && layer2Mode === "foil" && (
-        <>
-          <mesh
-            geometry={labelGeo}
-            material={layer2FoilMaskedMat}
-            renderOrder={1}
-          />
-          <mesh
-            geometry={labelGeo}
-            material={layer2ArtworkOverlayMat}
-            renderOrder={2}
-          />
-        </>
-      )}
-      {layer2Tex && layer2Mode === "artwork" && (
-        <mesh geometry={labelGeo} material={layer2Mat} renderOrder={1} />
+      {/* Layer 2 — artwork decal. With Material ON, the artwork's alpha
+           cuts out the current Layer 1 finish (foil/prismatic/chrome/
+           matte/…) instead of painting the artwork pixels themselves. With
+           Material OFF it's a standard transparent artwork decal (Varnish
+           optionally applies a clearcoat overprint). */}
+      {layer2Tex && (
+        <mesh
+          geometry={labelGeo}
+          material={layer2Material ? layer2Masked : layer2Mat}
+          renderOrder={1}
+        />
       )}
 
-      {/* Layer 3 — standard transparent decal in either mode. */}
+      {/* Layer 3 — same behavior as Layer 2, one render order higher so it
+           always reads on top when overlapping. */}
       {layer3Tex && (
-        <mesh geometry={labelGeo} material={layer3Mat} renderOrder={3} />
+        <mesh
+          geometry={labelGeo}
+          material={layer3Material ? layer3Masked : layer3Mat}
+          renderOrder={3}
+        />
       )}
     </group>
   );

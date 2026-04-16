@@ -67,6 +67,13 @@ export default function CalyxPreview() {
   );
   const [backFileName, setBackFileName] = useState<string | null>(null);
 
+  // Bag-only Layer 3 artwork — stacks on top of Layer 2 (the existing
+  // front/back decals). Starts empty; appears only when the user uploads.
+  const [layer3FrontTextureUrl, setLayer3FrontTextureUrl] = useState<string | null>(null);
+  const [layer3FrontFileName, setLayer3FrontFileName] = useState<string | null>(null);
+  const [layer3BackTextureUrl, setLayer3BackTextureUrl] = useState<string | null>(null);
+  const [layer3BackFileName, setLayer3BackFileName] = useState<string | null>(null);
+
   // Active model — driven by BagViewer's Leva dropdown, surfaced here so the
   // upload buttons can re-label themselves (Bag Front/Back → Layer 2/3 Art).
   const [currentModel, setCurrentModel] = useState<"bag" | "jar">("bag");
@@ -123,6 +130,34 @@ export default function CalyxPreview() {
       setMagicError(null);
     },
     [swapBlobUrl]
+  );
+
+  // Layer 3 uploaders — only shown in bag mode. Start null so the mesh
+  // skips the Layer 3 decals until a texture is provided.
+  const handleLayer3FrontUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setLayer3FrontTextureUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+      setLayer3FrontFileName(file.name);
+    },
+    []
+  );
+
+  const handleLayer3BackUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setLayer3BackTextureUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+      setLayer3BackFileName(file.name);
+    },
+    []
   );
 
   const handleUpdate = useCallback(() => {
@@ -221,7 +256,8 @@ export default function CalyxPreview() {
         {/* Left panel */}
         <aside className="flex-shrink-0 w-[200px] bg-white border-r border-[#e8ecf2] flex flex-col items-center pt-5 pb-6 gap-4 z-10 overflow-y-auto">
 
-          {/* Upload — slot A. Labels Bag Front for the bag, Layer 2 Art for the jar. */}
+          {/* Upload — slot A. In bag mode this is Layer 2 (front panel); in
+              jar mode it's Layer 2 artwork wrapped around the cylinder. */}
           <label
             className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
             style={{ background: "#0033A1" }}
@@ -232,7 +268,7 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            {currentModel === "jar" ? "Layer 2 Art" : "Bag Front"}
+            {currentModel === "jar" ? "Layer 2 Art" : "Layer 2 Front"}
             <input type="file" accept="image/*" className="hidden" onChange={handleFrontUpload} />
           </label>
 
@@ -242,7 +278,8 @@ export default function CalyxPreview() {
             </p>
           )}
 
-          {/* Upload — slot B. Labels Bag Back for the bag, Layer 3 Art for the jar. */}
+          {/* Upload — slot B. In bag mode this is Layer 2 (back panel); in
+              jar mode it's Layer 3 artwork around the cylinder. */}
           <label
             className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
             style={{ background: "#272724" }}
@@ -253,7 +290,7 @@ export default function CalyxPreview() {
               <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
                 stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            {currentModel === "jar" ? "Layer 3 Art" : "Bag Back"}
+            {currentModel === "jar" ? "Layer 3 Art" : "Layer 2 Back"}
             <input type="file" accept="image/*" className="hidden" onChange={handleBackUpload} />
           </label>
 
@@ -261,6 +298,53 @@ export default function CalyxPreview() {
             <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
               {backFileName.length > 22 ? backFileName.slice(0, 20) + "…" : backFileName}
             </p>
+          )}
+
+          {/* Bag-only Layer 3 upload slots — a second artwork layer that
+              stacks on top of Layer 2. Hidden in jar mode because the jar
+              already maps its Layer 3 to the second upload slot above. */}
+          {currentModel === "bag" && (
+            <>
+              <label
+                className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
+                style={{ background: "#4a4a48" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#0033A1")}
+                onMouseLeave={e => (e.currentTarget.style.background = "#4a4a48")}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
+                    stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Layer 3 Front
+                <input type="file" accept="image/*" className="hidden" onChange={handleLayer3FrontUpload} />
+              </label>
+
+              {layer3FrontFileName && (
+                <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
+                  {layer3FrontFileName.length > 22 ? layer3FrontFileName.slice(0, 20) + "…" : layer3FrontFileName}
+                </p>
+              )}
+
+              <label
+                className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
+                style={{ background: "#4a4a48" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "#0033A1")}
+                onMouseLeave={e => (e.currentTarget.style.background = "#4a4a48")}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
+                    stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Layer 3 Back
+                <input type="file" accept="image/*" className="hidden" onChange={handleLayer3BackUpload} />
+              </label>
+
+              {layer3BackFileName && (
+                <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
+                  {layer3BackFileName.length > 22 ? layer3BackFileName.slice(0, 20) + "…" : layer3BackFileName}
+                </p>
+              )}
+            </>
           )}
 
           <div className="w-[140px] h-px bg-[#e8ecf2]" />
@@ -398,6 +482,8 @@ export default function CalyxPreview() {
           <BagViewer
             textureUrl={frontTextureUrl}
             backTextureUrl={backTextureUrl}
+            layer3FrontTextureUrl={layer3FrontTextureUrl}
+            layer3BackTextureUrl={layer3BackTextureUrl}
             onScreenshot={setScreenshotUrl}
             captureRef={captureRef}
             onMaterialChange={handleMaterialChange}

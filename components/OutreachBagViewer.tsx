@@ -93,16 +93,16 @@ function ReflectiveFloor() {
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
-        blur={[90, 30]}
+        blur={[35, 12]}
         resolution={2048}
-        mixBlur={0.8}
-        mixStrength={7.0}
-        roughness={0.2}
-        depthScale={0.8}
+        mixBlur={0.25}
+        mixStrength={12.0}
+        roughness={0.05}
+        depthScale={0.6}
         minDepthThreshold={0.2}
         maxDepthThreshold={1.4}
         color="#eef1f8"
-        metalness={0.7}
+        metalness={0.9}
         mirror={1}
       />
     </mesh>
@@ -186,6 +186,7 @@ export default function OutreachBagViewer({
       labelMetalness={mat.labelMetalness}
       labelRoughness={mat.labelRoughness}
       labelVarnish={mat.labelVarnish ?? false}
+      labelMaterial={mat.labelMaterial ?? false}
       iridescence={iridescenceCfg?.iridescence ?? 0}
       iridescenceIOR={iridescenceCfg?.iridescenceIOR ?? 1.5}
       iridescenceThicknessRange={
