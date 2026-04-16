@@ -18,6 +18,7 @@ import {
   DEFAULT_MATERIAL,
   FINISH_PRESETS,
   resolveSurface,
+  resolveEnvironmentPreset,
   type BagMaterial,
 } from "@/lib/bagMaterial";
 import type { SceneEnvironment } from "@/lib/types";
@@ -230,8 +231,12 @@ export default function OutreachBagViewer({
             <Environment preset="studio" background={false} environmentIntensity={0.22} />
           </>
         ) : (
+          // Route lighting through resolveEnvironmentPreset so an unknown or
+          // BagViewer-specific value (e.g. "rave" slips past the isRave guard
+          // via a stale save) falls back to "studio" instead of crashing
+          // drei with "Preset must be one of: …".
           <Environment
-            preset={mat.lighting as "studio"}
+            preset={resolveEnvironmentPreset(mat.lighting)}
             environmentIntensity={dimScale}
           />
         )}

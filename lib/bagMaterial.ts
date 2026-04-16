@@ -94,3 +94,36 @@ export function resolveSurface(m: BagMaterial): FinishPreset {
   }
   return FINISH_PRESETS[m.finish] ?? FINISH_PRESETS.metallic;
 }
+
+/** drei's <Environment preset> accepts a fixed set of HDRI names. BagLighting
+ *  includes one extra, "rave", that we fake with coloured point lights in the
+ *  viewers — it is NOT valid for drei and WILL throw at runtime if passed
+ *  through. This helper normalises any BagLighting (or legacy/unknown value
+ *  from an older saved slot) to a drei-safe preset string.
+ *
+ *  Callers that want a Rave scene should check `lighting === "rave"` up-front
+ *  and mount their own coloured lights, then pass the fallback preset
+ *  ("studio") to drei for ambient HDRI contribution. */
+export type DreiEnvironmentPreset =
+  | "studio"
+  | "warehouse"
+  | "city"
+  | "forest"
+  | "sunset";
+
+export function resolveEnvironmentPreset(
+  lighting: BagLighting | string | null | undefined
+): DreiEnvironmentPreset {
+  switch (lighting) {
+    case "warehouse":
+    case "city":
+    case "forest":
+    case "sunset":
+    case "studio":
+      return lighting;
+    default:
+      // "rave" and anything else unrecognized (including legacy values from
+      // older saves) fall back to studio.
+      return "studio";
+  }
+}

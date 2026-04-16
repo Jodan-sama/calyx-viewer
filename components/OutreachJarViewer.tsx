@@ -16,6 +16,7 @@ import {
   DEFAULT_MATERIAL,
   FINISH_PRESETS,
   resolveSurface,
+  resolveEnvironmentPreset,
   type BagMaterial,
 } from "@/lib/bagMaterial";
 import type { SceneEnvironment } from "@/lib/types";
@@ -36,6 +37,25 @@ interface Props {
   transparent?: boolean;
   /** Scene environment captured at save time. Null → "default". */
   environment?: SceneEnvironment | null;
+}
+
+// ── Rave lighting (mirrors BagViewer) ────────────────────────────────────────
+// "rave" isn't a valid drei Environment preset, so whenever a slot was saved
+// with lighting === "rave" we drop these saturated colored point lights into
+// the scene and route Environment to "studio" at reduced intensity. Without
+// this handling drei throws "Preset must be one of: …" and the whole page
+// fails to hydrate.
+function RaveLights() {
+  return (
+    <>
+      <pointLight position={[-1.5, 1.5, 2.5]} intensity={60} color="#ff00cc" distance={15} decay={2} />
+      <pointLight position={[2, 0, 2.5]} intensity={45} color="#00ffee" distance={15} decay={2} />
+      <pointLight position={[0, 0.5, -2.5]} intensity={35} color="#aa00ff" distance={15} decay={2} />
+      <pointLight position={[0, 3, 1.5]} intensity={30} color="#ff44aa" distance={15} decay={2} />
+      <pointLight position={[2, -1.4, 2]} intensity={42} color="#22ff66" distance={15} decay={2} />
+      <ambientLight intensity={0.05} color="#ffffff" />
+    </>
+  );
 }
 
 // ── Smoke scene elements (mirrors BagViewer) ─────────────────────────────────
@@ -149,7 +169,12 @@ export default function OutreachJarViewer({
   const env = envProp ?? "default";
   const isSmoke = env === "smoke";
   const isDim = env === "dim";
+  const isRave = mat.lighting === "rave";
   const dimScale = isDim ? 0.2 : 1;
+  // Saved slots can carry lighting = "rave" (a BagViewer concept that doesn't
+  // correspond to any drei Environment preset). Resolve it to a drei-safe
+  // preset string here so the <Environment> primitive never throws.
+  const envPreset = resolveEnvironmentPreset(mat.lighting);
   const iridescenceCfg =
     mat.finish !== "custom" ? FINISH_PRESETS[mat.finish] : null;
 
@@ -201,13 +226,19 @@ export default function OutreachJarViewer({
       }}
     >
       {!transparent && <color attach="background" args={["#eef1f8"]} />}
-      <ambientLight intensity={0.45 * dimScale} />
+      {!isRave && <ambientLight intensity={0.45 * dimScale} />}
 
       <Suspense fallback={null}>
-        <Environment
-          preset={mat.lighting as "studio"}
-          environmentIntensity={dimScale}
-        />
+        {isRave ? (
+          <>
+            <RaveLights />
+            {/* Keep the HDRI contribution low so the rainbow point lights
+                dominate reflections — same tuning as the Preview viewer. */}
+            <Environment preset="studio" background={false} environmentIntensity={0.22} />
+          </>
+        ) : (
+          <Environment preset={envPreset} environmentIntensity={dimScale} />
+        )}
 
         {isSmoke && (
           <>
