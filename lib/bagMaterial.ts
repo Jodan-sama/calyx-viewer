@@ -15,6 +15,7 @@ export type BagFinish =
   | "gloss"
   | "satin"
   | "foil"
+  | "prismatic"
   | "multi-chrome"
   | "custom";
 
@@ -40,6 +41,10 @@ export const FINISH_PRESETS: Record<Exclude<BagFinish, "custom">, FinishPreset> 
   gloss:         { metalness: 0.15, roughness: 0.04 },
   satin:         { metalness: 0.35, roughness: 0.42 },
   foil:          { metalness: 1.0,  roughness: 0.0  },
+  // "Prismatic Foil" — mirror-polished chrome base driven by the custom
+  // diffraction-grating shader in BagMesh/SupplementJarMesh. Renders as
+  // fine rainbow streaks that shift hue with view angle.
+  prismatic:     { metalness: 1.0,  roughness: 0.0  },
   "multi-chrome": {
     metalness: 1.0,
     roughness: 0.0,
@@ -59,6 +64,10 @@ export interface BagMaterial {
   labelMetalness: number;
   labelRoughness: number;
   lighting: BagLighting;
+  /** When true, the label artwork gets a clear-gloss varnish with a subtle
+   *  alpha-derived bump so the artwork reads as a raised, high-shine
+   *  overprint. Optional for backwards-compatibility with existing saves. */
+  labelVarnish?: boolean;
 }
 
 export const DEFAULT_MATERIAL: BagMaterial = {
@@ -69,6 +78,7 @@ export const DEFAULT_MATERIAL: BagMaterial = {
   labelMetalness: 0.1,
   labelRoughness: 0.55,
   lighting: "studio",
+  labelVarnish: false,
 };
 
 /** Resolve the effective surface numbers for a material. */

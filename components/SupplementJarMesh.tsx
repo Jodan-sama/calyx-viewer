@@ -24,8 +24,50 @@ useGLTF.preload(JAR_LABEL_GLB);
 const MYLAR_ENV_BASE = 2.0;
 const FOIL_ENV_BASE = 0.6;
 const CHROME_ENV_BASE = 0.25;
+const PRISM_ENV_BASE = 0.45;
 const PLASTIC_ENV_BASE = 0.8;
 const DECAL_ENV_BASE = 0.6;
+
+// Varnish tuning — matches BagMesh.
+const VARNISH_BUMP_SCALE = 0.008;
+const VARNISH_CLEARCOAT = 1.0;
+const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
+const VARNISH_ROUGHNESS = 0.05;
+
+/** Builds a greyscale bump-map texture from a source texture's alpha channel.
+ *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
+ *  surface where the artwork is actually opaque. */
+function buildAlphaBumpTexture(src: THREE.Texture): THREE.CanvasTexture | null {
+  const img = src.image as
+    | HTMLImageElement
+    | HTMLCanvasElement
+    | ImageBitmap
+    | undefined;
+  if (!img) return null;
+  const w = (img as { width?: number }).width;
+  const h = (img as { height?: number }).height;
+  if (!w || !h) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.drawImage(img as CanvasImageSource, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    d[i] = a;
+    d[i + 1] = a;
+    d[i + 2] = a;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.anisotropy = 16;
+  tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
 
 export type LayerMode = "artwork" | "foil";
 
@@ -46,12 +88,16 @@ interface SupplementJarMeshProps {
   layer2Mode: LayerMode;
   layer2Metalness: number;
   layer2Roughness: number;
+  /** Clear-gloss overprint on Layer 2 artwork. No-op in foil mode. */
+  layer2Varnish?: boolean;
 
   // ── Layer 3 — artwork or foil decal. Clear until a texture is supplied. ──
   layer3TextureUrl: string | null;
   layer3Mode: LayerMode;
   layer3Metalness: number;
   layer3Roughness: number;
+  /** Clear-gloss overprint on Layer 3 artwork. No-op in foil mode. */
+  layer3Varnish?: boolean;
 
   /** Scene-level env dim (same prop as BagMesh). 1 = default. */
   envIntensityScale?: number;
@@ -244,10 +290,12 @@ export default function SupplementJarMesh({
   layer2Mode,
   layer2Metalness,
   layer2Roughness,
+  layer2Varnish = false,
   layer3TextureUrl,
   layer3Mode,
   layer3Metalness,
   layer3Roughness,
+  layer3Varnish = false,
   envIntensityScale = 1,
   floating = true,
 }: SupplementJarMeshProps) {
@@ -342,6 +390,54 @@ export default function SupplementJarMesh({
     return mat;
   }, []);
 
+  // ── Prismatic Foil shader (mirrors BagMesh) ───────────────────────────────
+  const prismaticFoilMat = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      metalness: 1.0,
+      roughness: 0.0,
+      envMapIntensity: PRISM_ENV_BASE,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <worldpos_vertex>",
+        `#include <worldpos_vertex>
+        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+      );
+      shader.fragmentShader =
+        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <dithering_fragment>",
+        `#include <dithering_fragment>
+        vec3 wN = normalize(vNormal);
+        vec3 vd = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
+        float ca = 0.7986;
+        float sa = 0.6018;
+        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
+                        vWorldPos.x * sa + vWorldPos.y * ca);
+        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
+        float hue = fract(
+          rot.y * 4.5 +
+          ndv * 1.4 +
+          wN.x * 0.35 +
+          wN.y * 0.25
+        );
+        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        vec3 chrome = vec3(0.90, 0.93, 0.98);
+        vec3 prismBand = mix(chrome, rainbow, 0.72);
+        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.60);
+        gl_FragColor.a = 1.0;`
+      );
+    };
+    return mat;
+  }, []);
+
   const multiChromeMat = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
       metalness: 1.0,
@@ -422,20 +518,26 @@ export default function SupplementJarMesh({
   useEffect(() => {
     holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
     multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
+    prismaticFoilMat.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
     holographicFoilMat.needsUpdate = true;
     multiChromeMat.needsUpdate = true;
-  }, [envIntensityScale, holographicFoilMat, multiChromeMat]);
+    prismaticFoilMat.needsUpdate = true;
+  }, [envIntensityScale, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
 
   // Pick the active Layer 1 material — matches BagMesh's traversal logic.
   const layer1Material: THREE.Material = useMemo(() => {
     if (finish === "foil") return holographicFoilMat;
+    if (finish === "prismatic") return prismaticFoilMat;
     if (iridescence > 0) return multiChromeMat;
     return mylarMat;
-  }, [finish, iridescence, mylarMat, holographicFoilMat, multiChromeMat]);
+  }, [finish, iridescence, mylarMat, holographicFoilMat, prismaticFoilMat, multiChromeMat]);
 
   // ── Layer 2 + Layer 3 decal materials ─────────────────────────────────────
+  // MeshPhysicalMaterial instead of MeshStandardMaterial so the Varnish toggle
+  // can reach for clearcoat + bumpMap. With varnish off these behave exactly
+  // like MeshStandardMaterial — clearcoat and bumpMap stay at their defaults.
   const makeDecalMat = (offset: number) =>
-    new THREE.MeshStandardMaterial({
+    new THREE.MeshPhysicalMaterial({
       metalness: 0,
       roughness: 0.5,
       envMapIntensity: DECAL_ENV_BASE,
@@ -524,6 +626,8 @@ export default function SupplementJarMesh({
 
   const [layer2Tex, setLayer2Tex] = useState<THREE.Texture | null>(null);
   const [layer3Tex, setLayer3Tex] = useState<THREE.Texture | null>(null);
+  const [layer2BumpTex, setLayer2BumpTex] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3BumpTex, setLayer3BumpTex] = useState<THREE.CanvasTexture | null>(null);
 
   useEffect(() => {
     if (!layer2TextureUrl) { setLayer2Tex(null); return; }
@@ -543,20 +647,54 @@ export default function SupplementJarMesh({
     return () => { signal.cancelled = true; };
   }, [layer3TextureUrl]);
 
+  // Alpha-channel bump maps used by the Varnish toggle so clearcoat only
+  // raises the surface where the artwork is opaque.
+  useEffect(() => {
+    if (!layer2Tex) { setLayer2BumpTex(null); return; }
+    const tex = buildAlphaBumpTexture(layer2Tex);
+    setLayer2BumpTex(tex);
+    return () => { tex?.dispose(); };
+  }, [layer2Tex]);
+
+  useEffect(() => {
+    if (!layer3Tex) { setLayer3BumpTex(null); return; }
+    const tex = buildAlphaBumpTexture(layer3Tex);
+    setLayer3BumpTex(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3Tex]);
+
   // Foil mode pins metalness/roughness to mirror-polished chrome. Artwork mode
   // uses the per-layer controls so the designer can dial in satin vs. gloss.
+  // Varnish (artwork mode only) overrides to a glossy clearcoat overprint
+  // with a subtle alpha-derived bump — reads as a raised foil varnish layer.
   useEffect(() => {
     layer2Mat.map = layer2Tex;
+    const useVarnish = layer2Varnish && layer2Mode === "artwork";
     if (layer2Mode === "foil") {
       layer2Mat.metalness = 1.0;
       layer2Mat.roughness = 0.05;
+      layer2Mat.clearcoat = 0;
+      layer2Mat.clearcoatRoughness = 0;
+      layer2Mat.bumpMap = null;
+      layer2Mat.bumpScale = 0;
+    } else if (useVarnish) {
+      layer2Mat.metalness = 0;
+      layer2Mat.roughness = VARNISH_ROUGHNESS;
+      layer2Mat.clearcoat = VARNISH_CLEARCOAT;
+      layer2Mat.clearcoatRoughness = VARNISH_CLEARCOAT_ROUGHNESS;
+      layer2Mat.bumpMap = layer2BumpTex;
+      layer2Mat.bumpScale = VARNISH_BUMP_SCALE;
     } else {
       layer2Mat.metalness = layer2Metalness;
       layer2Mat.roughness = layer2Roughness;
+      layer2Mat.clearcoat = 0;
+      layer2Mat.clearcoatRoughness = 0;
+      layer2Mat.bumpMap = null;
+      layer2Mat.bumpScale = 0;
     }
     layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer2Mat.needsUpdate = true;
-  }, [layer2Tex, layer2Mode, layer2Metalness, layer2Roughness, envIntensityScale, layer2Mat]);
+  }, [layer2Tex, layer2BumpTex, layer2Mode, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat]);
 
   // Layer 2 foil-with-artwork pair — only active when the user picks "foil"
   // for Layer 2 AND has uploaded artwork. The artwork is bound as `map` on
@@ -582,16 +720,32 @@ export default function SupplementJarMesh({
 
   useEffect(() => {
     layer3Mat.map = layer3Tex;
+    const useVarnish = layer3Varnish && layer3Mode === "artwork";
     if (layer3Mode === "foil") {
       layer3Mat.metalness = 1.0;
       layer3Mat.roughness = 0.05;
+      layer3Mat.clearcoat = 0;
+      layer3Mat.clearcoatRoughness = 0;
+      layer3Mat.bumpMap = null;
+      layer3Mat.bumpScale = 0;
+    } else if (useVarnish) {
+      layer3Mat.metalness = 0;
+      layer3Mat.roughness = VARNISH_ROUGHNESS;
+      layer3Mat.clearcoat = VARNISH_CLEARCOAT;
+      layer3Mat.clearcoatRoughness = VARNISH_CLEARCOAT_ROUGHNESS;
+      layer3Mat.bumpMap = layer3BumpTex;
+      layer3Mat.bumpScale = VARNISH_BUMP_SCALE;
     } else {
       layer3Mat.metalness = layer3Metalness;
       layer3Mat.roughness = layer3Roughness;
+      layer3Mat.clearcoat = 0;
+      layer3Mat.clearcoatRoughness = 0;
+      layer3Mat.bumpMap = null;
+      layer3Mat.bumpScale = 0;
     }
     layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer3Mat.needsUpdate = true;
-  }, [layer3Tex, layer3Mode, layer3Metalness, layer3Roughness, envIntensityScale, layer3Mat]);
+  }, [layer3Tex, layer3BumpTex, layer3Mode, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat]);
 
   // ── Scene processing (body + label) ───────────────────────────────────────
   // Body: hide the old glb's built-in label (any non-Plastic primitive) and

@@ -246,9 +246,9 @@ export default function BagViewer({
     activeLayer,
     finish, metalness, roughness, bagColor,
     autoRotate, lighting, environment,
-    labelMetalness, labelRoughness,
-    layer2Mode, layer2Metalness, layer2Roughness,
-    layer3Mode, layer3Metalness, layer3Roughness,
+    labelMetalness, labelRoughness, labelVarnish,
+    layer2Mode, layer2Metalness, layer2Roughness, layer2Varnish,
+    layer3Mode, layer3Metalness, layer3Roughness, layer3Varnish,
   } = useControls({
     Model: folder({
       model: {
@@ -288,6 +288,7 @@ export default function BagViewer({
           Gloss: "gloss",
           Satin: "satin",
           "Holographic Foil": "foil",
+          "Prismatic Foil": "prismatic",
           "Multi-Chrome": "multi-chrome",
           Custom: "custom",
         },
@@ -322,10 +323,18 @@ export default function BagViewer({
       // have their own metalness/roughness inside the Layer folders.
       labelMetalness: {
         label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
-        render: (get) => get("Model.model") === "bag",
+        render: (get) =>
+          get("Model.model") === "bag" && !get("Label.labelVarnish"),
       },
       labelRoughness: {
         label: "Roughness", value: 0.55, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "bag" && !get("Label.labelVarnish"),
+      },
+      // Varnish — clear-gloss overprint with a subtle alpha-derived bump so
+      // artwork reads as a raised, full-gloss layer. Off by default.
+      labelVarnish: {
+        label: "Varnish", value: false,
         render: (get) => get("Model.model") === "bag",
       },
     }, { collapsed: false }),
@@ -343,10 +352,21 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer2" &&
-          get("Layer 2.layer2Mode") === "artwork",
+          get("Layer 2.layer2Mode") === "artwork" &&
+          !get("Layer 2.layer2Varnish"),
       },
       layer2Roughness: {
         label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer2" &&
+          get("Layer 2.layer2Mode") === "artwork" &&
+          !get("Layer 2.layer2Varnish"),
+      },
+      // Varnish — clear-gloss overprint on artwork. Only meaningful in
+      // artwork mode (foil is already high-gloss chrome).
+      layer2Varnish: {
+        label: "Varnish", value: false,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer2" &&
@@ -367,10 +387,19 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer3" &&
-          get("Layer 3.layer3Mode") === "artwork",
+          get("Layer 3.layer3Mode") === "artwork" &&
+          !get("Layer 3.layer3Varnish"),
       },
       layer3Roughness: {
         label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          get("Model.activeLayer") === "layer3" &&
+          get("Layer 3.layer3Mode") === "artwork" &&
+          !get("Layer 3.layer3Varnish"),
+      },
+      layer3Varnish: {
+        label: "Varnish", value: false,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Model.activeLayer") === "layer3" &&
@@ -443,6 +472,7 @@ export default function BagViewer({
       labelMetalness,
       labelRoughness,
       lighting: lighting as BagLighting,
+      labelVarnish,
     });
   }, [
     finish,
@@ -452,6 +482,7 @@ export default function BagViewer({
     labelMetalness,
     labelRoughness,
     lighting,
+    labelVarnish,
     onMaterialChange,
   ]);
 
@@ -503,6 +534,7 @@ export default function BagViewer({
             color={bagColor}
             labelMetalness={labelMetalness}
             labelRoughness={labelRoughness}
+            labelVarnish={labelVarnish}
             iridescence={preset?.iridescence ?? 0}
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
@@ -534,12 +566,14 @@ export default function BagViewer({
             layer2Mode={layer2Mode as "artwork" | "foil"}
             layer2Metalness={layer2Metalness}
             layer2Roughness={layer2Roughness}
+            layer2Varnish={layer2Varnish}
             layer3TextureUrl={
               backTextureUrl === DEFAULT_BACK_TEXTURE ? null : backTextureUrl ?? null
             }
             layer3Mode={layer3Mode as "artwork" | "foil"}
             layer3Metalness={layer3Metalness}
             layer3Roughness={layer3Roughness}
+            layer3Varnish={layer3Varnish}
             envIntensityScale={dimScale}
             floating={environment !== "smoke"}
           />

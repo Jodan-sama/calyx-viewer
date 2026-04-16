@@ -20,6 +20,10 @@ interface BagMeshProps {
   iridescenceIOR?: number;
   iridescenceThicknessRange?: [number, number];
   finish?: string;
+  /** When true, the label artwork becomes a glossy clear-varnish overprint
+   *  with a tiny alpha-derived bump — only raised where the artwork is
+   *  opaque. Background bag surface is unaffected. */
+  labelVarnish?: boolean;
   /** Multiplier applied to every material's envMapIntensity — lets the
    *  caller dim the HDRI reflections on the bag without touching the
    *  scene's <Environment>. 1.0 = default, 0.5 = half-strength, etc. */
@@ -36,6 +40,48 @@ const MYLAR_ENV_BASE = 2.0;
 const LABEL_ENV_BASE = 0.5;
 const FOIL_ENV_BASE = 0.6;
 const CHROME_ENV_BASE = 0.25;
+const PRISM_ENV_BASE = 0.45;
+
+// Varnish tuning — subtle raise, full clearcoat gloss.
+const VARNISH_BUMP_SCALE = 0.008;
+const VARNISH_CLEARCOAT = 1.0;
+const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
+const VARNISH_ROUGHNESS = 0.05;
+
+/** Builds a greyscale CanvasTexture whose pixel brightness equals the source
+ *  texture's alpha channel, so it can be plugged straight into MeshPhysical
+ *  Material.bumpMap to raise the surface only where artwork is opaque. */
+function buildAlphaBumpTexture(src: THREE.Texture): THREE.CanvasTexture | null {
+  const img = src.image as
+    | HTMLImageElement
+    | HTMLCanvasElement
+    | ImageBitmap
+    | undefined;
+  if (!img) return null;
+  const w = (img as { width?: number }).width;
+  const h = (img as { height?: number }).height;
+  if (!w || !h) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  ctx.drawImage(img as CanvasImageSource, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    d[i] = a;
+    d[i + 1] = a;
+    d[i + 2] = a;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace; // bump maps are linear intensity
+  tex.anisotropy = 16;
+  return tex;
+}
 
 function hsvToRgb(h: number): [number, number, number] {
   const i = Math.floor(h * 6);
@@ -240,6 +286,7 @@ export default function BagMesh({
   iridescenceIOR = 1.5,
   iridescenceThicknessRange = [100, 800],
   finish = "",
+  labelVarnish = false,
   envIntensityScale = 1,
   floating = true,
 }: BagMeshProps) {
@@ -283,6 +330,57 @@ export default function BagMesh({
         vec3 dotColor = mix(chrome, rainbow, 0.55);
         vec3 foilColor = mix(chrome, dotColor, circle * 0.80);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, foilColor, 0.52);
+        gl_FragColor.a = 1.0;`
+      );
+    };
+    return mat;
+  }, []);
+
+  // ── Prismatic Foil shader ──────────────────────────────────────────────────
+  // Diffraction-grating look — fine diagonal streaks with a rainbow spectrum
+  // that shifts along the streak direction and with view angle. Reads as a
+  // linear prism-split rainbow rather than the holographic's dot-cell pattern.
+  const prismaticFoilMat = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      metalness: 1.0, roughness: 0.0, envMapIntensity: PRISM_ENV_BASE, side: THREE.DoubleSide,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <worldpos_vertex>',
+        `#include <worldpos_vertex>
+        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+      );
+      shader.fragmentShader = `varying vec3 vWorldPos;\n` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+        vec3 wN = normalize(vNormal);
+        vec3 vd = normalize(cameraPosition - vWorldPos);
+        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
+        // Rotate world XY by ~37° so the grating lines run diagonally and
+        // catch highlights regardless of surface orientation.
+        float ca = 0.7986; // cos(0.64)
+        float sa = 0.6018; // sin(0.64)
+        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
+                        vWorldPos.x * sa + vWorldPos.y * ca);
+        // Fine parallel grating pattern along the rotated X axis.
+        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
+        // Rainbow hue — shifts along the streak direction (rot.y), with view
+        // angle, and with surface normal so movement reveals colour flow.
+        float hue = fract(
+          rot.y * 4.5 +
+          ndv * 1.4 +
+          wN.x * 0.35 +
+          wN.y * 0.25
+        );
+        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        vec3 chrome = vec3(0.90, 0.93, 0.98);
+        vec3 prismBand = mix(chrome, rainbow, 0.72);
+        // Grating modulates how strongly the rainbow reads — peaks show full
+        // colour, troughs pull toward slightly-darkened chrome.
+        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.60);
         gl_FragColor.a = 1.0;`
       );
     };
@@ -406,34 +504,39 @@ export default function BagMesh({
     mylarMat.needsUpdate = true;
   }, [color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, mylarMat, holographicTex]);
 
-  // Keep the foil + multi-chrome shaders in sync with the env scale too.
+  // Keep the foil + multi-chrome + prismatic shaders in sync with env scale.
   useEffect(() => {
     holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
     holographicFoilMat.needsUpdate = true;
     multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
     multiChromeMat.needsUpdate = true;
-  }, [envIntensityScale, holographicFoilMat, multiChromeMat]);
+    prismaticFoilMat.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
+    prismaticFoilMat.needsUpdate = true;
+  }, [envIntensityScale, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
 
   useEffect(() => {
     bagScene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh) return;
-      if (finish === "foil")  m.material = holographicFoilMat;
-      else if (iridescence > 0) m.material = multiChromeMat;
-      else                   m.material = mylarMat;
+      if (finish === "foil")           m.material = holographicFoilMat;
+      else if (finish === "prismatic") m.material = prismaticFoilMat;
+      else if (iridescence > 0)        m.material = multiChromeMat;
+      else                             m.material = mylarMat;
       m.castShadow = true;
       m.receiveShadow = true;
       m.renderOrder = 0;
     });
-  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, iridescence, finish]);
+  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, iridescence, finish]);
 
   // Mark label geo dirty when bag scene changes
   useEffect(() => { decalDirty.current = true; }, [bagScene]);
 
   // ── Label materials (front + back) ─────────────────────────────────────────
-  // Two separate materials so front and back can hold different maps.
+  // MeshPhysicalMaterial so the Varnish toggle can reach for clearcoat +
+  // bumpMap. When varnish is off these behave identically to the old
+  // MeshStandardMaterial — clearcoat stays at 0 and bumpMap is null.
   const buildLabelMat = () =>
-    new THREE.MeshStandardMaterial({
+    new THREE.MeshPhysicalMaterial({
       metalness: labelMetalness,
       roughness: labelRoughness,
       envMapIntensity: LABEL_ENV_BASE,
@@ -450,21 +553,67 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const backLabelMat = useMemo(buildLabelMat, []);
 
+  // Alpha-derived bump maps — regenerated whenever the artwork changes. Kept
+  // in state so the useEffect that applies them to the material can dispose
+  // stale textures cleanly.
+  const [frontBumpTex, setFrontBumpTex] = useState<THREE.CanvasTexture | null>(null);
+  const [backBumpTex, setBackBumpTex] = useState<THREE.CanvasTexture | null>(null);
+
+  useEffect(() => {
+    if (!frontLabelTex) { setFrontBumpTex(null); return; }
+    const tex = buildAlphaBumpTexture(frontLabelTex);
+    setFrontBumpTex(tex);
+    return () => { tex?.dispose(); };
+  }, [frontLabelTex]);
+
+  useEffect(() => {
+    if (!backLabelTex) { setBackBumpTex(null); return; }
+    const tex = buildAlphaBumpTexture(backLabelTex);
+    setBackBumpTex(tex);
+    return () => { tex?.dispose(); };
+  }, [backLabelTex]);
+
   useEffect(() => {
     frontLabelMat.map = frontLabelTex;
-    frontLabelMat.metalness = labelMetalness;
-    frontLabelMat.roughness = labelRoughness;
     frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
+    if (labelVarnish) {
+      frontLabelMat.metalness = 0;
+      frontLabelMat.roughness = VARNISH_ROUGHNESS;
+      frontLabelMat.clearcoat = VARNISH_CLEARCOAT;
+      frontLabelMat.clearcoatRoughness = VARNISH_CLEARCOAT_ROUGHNESS;
+      frontLabelMat.bumpMap = frontBumpTex;
+      frontLabelMat.bumpScale = VARNISH_BUMP_SCALE;
+    } else {
+      frontLabelMat.metalness = labelMetalness;
+      frontLabelMat.roughness = labelRoughness;
+      frontLabelMat.clearcoat = 0;
+      frontLabelMat.clearcoatRoughness = 0;
+      frontLabelMat.bumpMap = null;
+      frontLabelMat.bumpScale = 0;
+    }
     frontLabelMat.needsUpdate = true;
-  }, [frontLabelTex, labelMetalness, labelRoughness, envIntensityScale, frontLabelMat]);
+  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, frontLabelMat]);
 
   useEffect(() => {
     backLabelMat.map = backLabelTex;
-    backLabelMat.metalness = labelMetalness;
-    backLabelMat.roughness = labelRoughness;
     backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
+    if (labelVarnish) {
+      backLabelMat.metalness = 0;
+      backLabelMat.roughness = VARNISH_ROUGHNESS;
+      backLabelMat.clearcoat = VARNISH_CLEARCOAT;
+      backLabelMat.clearcoatRoughness = VARNISH_CLEARCOAT_ROUGHNESS;
+      backLabelMat.bumpMap = backBumpTex;
+      backLabelMat.bumpScale = VARNISH_BUMP_SCALE;
+    } else {
+      backLabelMat.metalness = labelMetalness;
+      backLabelMat.roughness = labelRoughness;
+      backLabelMat.clearcoat = 0;
+      backLabelMat.clearcoatRoughness = 0;
+      backLabelMat.bumpMap = null;
+      backLabelMat.bumpScale = 0;
+    }
     backLabelMat.needsUpdate = true;
-  }, [backLabelTex, labelMetalness, labelRoughness, envIntensityScale, backLabelMat]);
+  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, backLabelMat]);
 
   // ── Label geometries (front + back, regenerated on decalDirty) ─────────────
   const [frontLabelGeo, setFrontLabelGeo] = useState<THREE.BufferGeometry | null>(null);

@@ -185,6 +185,7 @@ export default function OutreachBagViewer({
       color={mat.bagColor}
       labelMetalness={mat.labelMetalness}
       labelRoughness={mat.labelRoughness}
+      labelVarnish={mat.labelVarnish ?? false}
       iridescence={iridescenceCfg?.iridescence ?? 0}
       iridescenceIOR={iridescenceCfg?.iridescenceIOR ?? 1.5}
       iridescenceThicknessRange={
