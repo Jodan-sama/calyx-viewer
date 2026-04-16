@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useRef, useEffect, useMemo } from "react";
+import { Suspense, useRef, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -10,7 +11,7 @@ import {
   Clouds,
   MeshReflectorMaterial,
 } from "@react-three/drei";
-import { useControls, folder } from "leva";
+import { useControls, folder, button } from "leva";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
 import SupplementJarMesh from "./SupplementJarMesh";
@@ -22,6 +23,131 @@ import {
   type BagLighting,
   type BagMaterial,
 } from "@/lib/bagMaterial";
+import {
+  loadLightingForEnv,
+  saveLightingForEnv,
+  clearLightingForEnv,
+  LIGHTING_DEFAULTS,
+  type SavedLighting,
+} from "@/lib/lightingPrefs";
+import type { SceneEnvironment } from "@/lib/types";
+
+// ── Lighting reset icon portal ──────────────────────────────────────────────
+// Renders a small circular "↻" button into the Lighting folder's title row
+// in the docked Leva panel. Leva has no first-class API for folder-header
+// actions, so we find the title element by text content and portal a React
+// child into it with absolute positioning. A MutationObserver handles the
+// case where Leva's DOM hasn't mounted yet (or rebuilds mid-session).
+//
+// Clicking the icon invokes the caller-supplied `onReset`, which wipes the
+// current environment's stored lighting in localStorage and snaps Leva
+// back to LIGHTING_DEFAULTS — all handled in BagViewer above. The icon
+// calls `stopPropagation` so the click doesn't also toggle the folder's
+// (already-disabled) collapse state.
+function LightingResetIcon({ onReset }: { onReset: () => void }) {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // Find the Lighting *folder title* row — distinct from any
+    // field label that happens to read "Lighting" (notably the
+    // Scene → Lighting HDRI dropdown, which also has a label of
+    // that exact text). Leva tags every folder container with an
+    // inline `--leva-colors-folderWidgetColor` CSS variable, and
+    // the folder's title row is always its first element child;
+    // that gives us an unambiguous anchor that's immune to the
+    // generated emotion classnames changing between versions.
+    const findTarget = (): HTMLElement | null => {
+      const scope = document.querySelector(".calyx-leva");
+      if (!scope) return null;
+      const folders = scope.querySelectorAll<HTMLDivElement>(
+        'div[style*="--leva-colors-folderWidgetColor"]'
+      );
+      for (const folder of Array.from(folders)) {
+        const title = folder.firstElementChild as HTMLElement | null;
+        if (!title) continue;
+        if (title.textContent?.trim() === "Lighting") return title;
+      }
+      return null;
+    };
+
+    const attach = (el: HTMLElement) => {
+      // The title row needs `position: relative` so our absolutely-
+      // positioned button anchors to it. This is a one-time nudge;
+      // Leva's own styles don't rely on the row's position value.
+      el.style.position = "relative";
+      setHost(el);
+    };
+
+    const first = findTarget();
+    if (first) {
+      attach(first);
+      return;
+    }
+
+    // Leva's Suspense-guarded internals may mount slightly after
+    // this effect runs. Observe body-level DOM changes until the
+    // target appears, then disconnect. Observer is cheap — only
+    // fires on actual subtree mutations.
+    const obs = new MutationObserver(() => {
+      const el = findTarget();
+      if (el) {
+        attach(el);
+        obs.disconnect();
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, []);
+
+  if (!host) return null;
+
+  return createPortal(
+    <button
+      type="button"
+      onClick={(e) => {
+        // stopPropagation so we don't also toggle the folder's
+        // collapse handler (which is CSS-disabled but still present
+        // in the DOM — a bubbled click would still fire it).
+        e.stopPropagation();
+        onReset();
+      }}
+      title="Reset lighting to defaults (clears saved rig for this environment)"
+      aria-label="Reset lighting"
+      style={{
+        position: "absolute",
+        right: 8,
+        top: "50%",
+        transform: "translateY(-50%)",
+        width: 20,
+        height: 20,
+        padding: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: "50%",
+        border: "1px solid rgba(39, 39, 36, 0.25)",
+        background: "rgba(255, 255, 255, 0.55)",
+        color: "rgba(39, 39, 36, 0.7)",
+        cursor: "pointer",
+        // Re-enable interaction — the CSS that kills folder-title
+        // click-to-collapse sets pointer-events: none on the whole
+        // row, so our portaled child needs to opt back in.
+        pointerEvents: "auto",
+      }}
+    >
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+        <path
+          d="M10 6a4 4 0 1 1-1.17-2.83M10 2v3h-3"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>,
+    host
+  );
+}
 
 // ── Screenshot helper — auto-captures on load + exposes manual trigger ────────
 function ScreenshotCapture({
@@ -276,22 +402,35 @@ export default function BagViewer({
   const iMat = initialMaterial;
   const iEnv = initialEnvironment ?? "default";
   const iModel = initialModel ?? "bag";
-  const {
-    model,
-    finish, metalness, roughness, bagColor,
-    autoRotate, lighting, environment,
-    ambientIntensity, envIntensity, spotCount,
-    spot1Color, spot1Intensity, spot1Pos,
-    spot2Color, spot2Intensity, spot2Pos,
-    spot3Color, spot3Intensity, spot3Pos,
-    spot4Color, spot4Intensity, spot4Pos,
-    labelMetalness, labelRoughness, labelVarnish, labelMaterial,
-    labelMatFinish, labelMatMetalness, labelMatRoughness,
-    layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
-    layer2MatFinish, layer2MatMetalness, layer2MatRoughness,
-    layer3Metalness, layer3Roughness, layer3Varnish, layer3Material,
-    layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
-  } = useControls({
+
+  // Seed the Lighting folder from whatever rig is stored for the
+  // initial environment — each env (default/smoke/dim) can carry its
+  // own saved rig. Falls back to LIGHTING_DEFAULTS when nothing is
+  // stored. Computed once at mount; subsequent env switches update
+  // the live Leva state imperatively via setLeva (see useEffect on
+  // environment below).
+  const iLighting = useMemo<SavedLighting>(
+    () => loadLightingForEnv(iEnv) ?? LIGHTING_DEFAULTS,
+    [iEnv]
+  );
+
+  // Handlers the Lighting folder's SAVE / RESET controls call into.
+  // These need to close over setLeva and the current `environment`
+  // (so SAVE goes to the *active* env, not the initial one). Leva's
+  // button() helper captures handlers by reference at schema-build
+  // time, so we route through refs and resolve the live values
+  // inside — see `lightingOpsRef` below.
+  const lightingOpsRef = useRef<{
+    save: () => void;
+    reset: () => void;
+  }>({ save: () => {}, reset: () => {} });
+
+  // Factory-form useControls so we get a setter. The factory itself
+  // runs once on mount (empty deps) — we use `setLeva` imperatively
+  // below to load saved rigs on env change and snap values back on
+  // RESET. Destructured into the same flat names the rest of the
+  // component already uses.
+  const [values, setLeva] = useControls(() => ({
     Model: folder({
       model: {
         label: "Model",
@@ -531,71 +670,88 @@ export default function BagViewer({
     // stack on top of whatever the HDRI + environment scene already
     // contributes (Smoke's backlights, Dim's rainbow ring, etc.).
     Lighting: folder({
+      // Initial values come from iLighting (= stored rig for iEnv, or
+      // LIGHTING_DEFAULTS). On env change, setLeva(...) swaps in the
+      // new env's stored rig. The RESET icon (portal-injected into
+      // the folder title) clears storage for the current env and
+      // snaps values back to LIGHTING_DEFAULTS.
       ambientIntensity: {
-        label: "Ambient", value: 0.45, min: 0, max: 3, step: 0.01,
+        label: "Ambient", value: iLighting.ambientIntensity, min: 0, max: 3, step: 0.01,
       },
       envIntensity: {
-        label: "HDRI Intensity", value: 1.0, min: 0, max: 3, step: 0.01,
+        label: "HDRI Intensity", value: iLighting.envIntensity, min: 0, max: 3, step: 0.01,
       },
       spotCount: {
-        label: "Spotlights", value: 0, min: 0, max: 4, step: 1,
+        label: "Spotlights", value: iLighting.spotCount, min: 0, max: 4, step: 1,
       },
       // Spotlight 1
       spot1Color: {
-        label: "S1 Color", value: "#ffffff",
+        label: "S1 Color", value: iLighting.spot1Color,
         render: (get) => get("Lighting.spotCount") >= 1,
       },
       spot1Intensity: {
-        label: "S1 Intensity", value: 30, min: 0, max: 200, step: 1,
+        label: "S1 Intensity", value: iLighting.spot1Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Lighting.spotCount") >= 1,
       },
       spot1Pos: {
-        label: "S1 Position", value: { x: -2.5, y: 2.5, z: 3.0 },
+        label: "S1 Position", value: iLighting.spot1Pos,
         step: 0.1,
         render: (get) => get("Lighting.spotCount") >= 1,
       },
       // Spotlight 2
       spot2Color: {
-        label: "S2 Color", value: "#ffd7a8",
+        label: "S2 Color", value: iLighting.spot2Color,
         render: (get) => get("Lighting.spotCount") >= 2,
       },
       spot2Intensity: {
-        label: "S2 Intensity", value: 30, min: 0, max: 200, step: 1,
+        label: "S2 Intensity", value: iLighting.spot2Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Lighting.spotCount") >= 2,
       },
       spot2Pos: {
-        label: "S2 Position", value: { x: 2.5, y: 2.5, z: 3.0 },
+        label: "S2 Position", value: iLighting.spot2Pos,
         step: 0.1,
         render: (get) => get("Lighting.spotCount") >= 2,
       },
       // Spotlight 3
       spot3Color: {
-        label: "S3 Color", value: "#a8c9ff",
+        label: "S3 Color", value: iLighting.spot3Color,
         render: (get) => get("Lighting.spotCount") >= 3,
       },
       spot3Intensity: {
-        label: "S3 Intensity", value: 20, min: 0, max: 200, step: 1,
+        label: "S3 Intensity", value: iLighting.spot3Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Lighting.spotCount") >= 3,
       },
       spot3Pos: {
-        label: "S3 Position", value: { x: 0, y: 1.0, z: -3.0 },
+        label: "S3 Position", value: iLighting.spot3Pos,
         step: 0.1,
         render: (get) => get("Lighting.spotCount") >= 3,
       },
       // Spotlight 4
       spot4Color: {
-        label: "S4 Color", value: "#ffffff",
+        label: "S4 Color", value: iLighting.spot4Color,
         render: (get) => get("Lighting.spotCount") >= 4,
       },
       spot4Intensity: {
-        label: "S4 Intensity", value: 20, min: 0, max: 200, step: 1,
+        label: "S4 Intensity", value: iLighting.spot4Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Lighting.spotCount") >= 4,
       },
       spot4Pos: {
-        label: "S4 Position", value: { x: 0, y: 4.0, z: 0 },
+        label: "S4 Position", value: iLighting.spot4Pos,
         step: 0.1,
         render: (get) => get("Lighting.spotCount") >= 4,
       },
+      // SAVE button pinned to the bottom of the folder. Writes the
+      // current Leva values into localStorage under the *active*
+      // environment's key — so each of default / smoke / dim carries
+      // its own persisted rig. Handlers are routed through a ref so
+      // the button closes over the latest `environment` + `values`
+      // rather than the stale ones captured at schema-build time.
+      //
+      // Leva renders buttons using their schema key as the label, so
+      // the verbose key here is intentional — it's what users see.
+      "Save Lighting for Environment": button(() =>
+        lightingOpsRef.current.save()
+      ),
     }, { collapsed: false }),
 
     Environment: folder({
@@ -605,7 +761,83 @@ export default function BagViewer({
         options: { Default: "default", Smoke: "smoke", Dim: "dim" },
       },
     }, { collapsed: false }),
+  }), []);
+
+  // Destructure the flat values object so the rest of the component
+  // keeps consuming each field by name — unchanged from the pre-
+  // factory-form call.
+  const {
+    model,
+    finish, metalness, roughness, bagColor,
+    autoRotate, lighting, environment,
+    ambientIntensity, envIntensity, spotCount,
+    spot1Color, spot1Intensity, spot1Pos,
+    spot2Color, spot2Intensity, spot2Pos,
+    spot3Color, spot3Intensity, spot3Pos,
+    spot4Color, spot4Intensity, spot4Pos,
+    labelMetalness, labelRoughness, labelVarnish, labelMaterial,
+    labelMatFinish, labelMatMetalness, labelMatRoughness,
+    layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
+    layer2MatFinish, layer2MatMetalness, layer2MatRoughness,
+    layer3Metalness, layer3Roughness, layer3Varnish, layer3Material,
+    layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
+  } = values;
+
+  // ── Lighting persistence wiring ────────────────────────────────────────────
+  // Keep a snapshot of the current Leva lighting values in a ref so
+  // the SAVE/RESET handlers always see the latest. Leva's `button()`
+  // captures its callback by reference at schema-build time (once per
+  // mount), so we can't close over `values` directly — each render
+  // refreshes this ref instead and the handlers read from it.
+  const lightingValuesRef = useRef<SavedLighting>({
+    ambientIntensity, envIntensity, spotCount,
+    spot1Color, spot1Intensity, spot1Pos,
+    spot2Color, spot2Intensity, spot2Pos,
+    spot3Color, spot3Intensity, spot3Pos,
+    spot4Color, spot4Intensity, spot4Pos,
   });
+  lightingValuesRef.current = {
+    ambientIntensity, envIntensity, spotCount,
+    spot1Color, spot1Intensity, spot1Pos,
+    spot2Color, spot2Intensity, spot2Pos,
+    spot3Color, spot3Intensity, spot3Pos,
+    spot4Color, spot4Intensity, spot4Pos,
+  };
+
+  // Same trick for the current environment — the SAVE handler needs
+  // to write to whichever env is selected *at click time*, not the
+  // one that was active when the schema was first built.
+  const envRef = useRef<SceneEnvironment>(environment as SceneEnvironment);
+  envRef.current = environment as SceneEnvironment;
+
+  // Bind the actual SAVE/RESET logic to the ref the button closure
+  // reads from. Updated on every render so the handlers always see
+  // the newest values + env.
+  lightingOpsRef.current = {
+    save: () => {
+      const env = envRef.current;
+      saveLightingForEnv(env, lightingValuesRef.current);
+    },
+    reset: () => {
+      const env = envRef.current;
+      clearLightingForEnv(env);
+      setLeva(LIGHTING_DEFAULTS as unknown as Record<string, unknown>);
+    },
+  };
+
+  // When the user switches environments, load that env's stored rig
+  // (or fall back to LIGHTING_DEFAULTS). The first run on mount
+  // sets the values the factory already seeded — harmless double-set.
+  // Unsaved edits in the previous env are intentionally discarded;
+  // users commit with SAVE before switching.
+  useEffect(() => {
+    const env = environment as SceneEnvironment;
+    const stored = loadLightingForEnv(env);
+    setLeva((stored ?? LIGHTING_DEFAULTS) as unknown as Record<string, unknown>);
+    // Purposefully exclude setLeva from deps — it's stable across
+    // renders by Leva contract, and including it would confuse eslint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [environment]);
 
   // Emit current model so the page can adapt its upload buttons.
   useEffect(() => {
@@ -674,6 +906,12 @@ export default function BagViewer({
   ]);
 
   return (
+    <>
+      {/* Portal-injected reset icon in the Lighting folder's title
+          row. Lives outside the Canvas because it's a DOM button, not
+          a three.js primitive — React routes the child through the
+          host element the component finds in the Leva panel. */}
+      <LightingResetIcon onReset={() => lightingOpsRef.current.reset()} />
     <Canvas
       camera={{ position: [0, -0.3, 4.5], fov: 42 }}
       gl={{
@@ -881,5 +1119,6 @@ export default function BagViewer({
         maxPolarAngle={Math.PI * 0.85}
       />
     </Canvas>
+    </>
   );
 }
