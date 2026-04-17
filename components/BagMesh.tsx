@@ -644,11 +644,31 @@ export default function BagMesh({
     prismaticFoilMat.needsUpdate = true;
   }, [envIntensityScale, uvEnvMult, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
 
+  // Dark stand-in material the entire bag body switches to under UV
+  // Blacklight lighting — replaces whichever finish the user picked
+  // (mylar / foil / multi-chrome / prismatic) because those finishes'
+  // custom shaders self-illuminate bright pastel / iridescent colours
+  // independent of lighting, which fights the fluorescent-layers-only
+  // look UV is trying to sell. A plain diffuse near-black material
+  // reacts only to the violet UV point lights so the body reads as a
+  // deep-violet silhouette against the black scene.
+  const uvDarkMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: "#1a0a2e",
+        metalness: 0,
+        roughness: 0.95,
+        envMapIntensity: 0,
+      }),
+    []
+  );
+
   useEffect(() => {
     bagScene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh) return;
-      if (finish === "debug-normals")  m.material = debugNormalMat;
+      if (lighting === "uv")           m.material = uvDarkMat;
+      else if (finish === "debug-normals")  m.material = debugNormalMat;
       else if (finish === "foil")      m.material = holographicFoilMat;
       else if (finish === "prismatic") m.material = prismaticFoilMat;
       else if (iridescence > 0)        m.material = multiChromeMat;
@@ -657,7 +677,7 @@ export default function BagMesh({
       m.receiveShadow = true;
       m.renderOrder = 0;
     });
-  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, debugNormalMat, iridescence, finish]);
+  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, debugNormalMat, uvDarkMat, iridescence, finish, lighting]);
 
   // Mark label geo dirty when bag scene changes
   useEffect(() => { decalDirty.current = true; }, [bagScene]);

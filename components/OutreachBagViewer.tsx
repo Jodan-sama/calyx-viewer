@@ -319,11 +319,11 @@ export default function OutreachBagViewer({
             }
           />
         ) : isUV ? (
-          <Environment
-            preset="studio"
-            background={false}
-            environmentIntensity={0.005}
-          />
+          // No Environment at all in UV — see BagViewer for rationale.
+          // The saved rig's own lights (if any) plus UVLights handle
+          // all illumination; foils/chrome/prismatic get swapped to a
+          // plain dark diffuse by BagMesh/SupplementJarMesh.
+          null
         ) : (
           <Environment
             preset={resolveEnvironmentPreset(mat.lighting)}

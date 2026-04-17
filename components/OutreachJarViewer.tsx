@@ -298,11 +298,9 @@ export default function OutreachJarViewer({
             }
           />
         ) : isUV ? (
-          <Environment
-            preset="studio"
-            background={false}
-            environmentIntensity={0.005}
-          />
+          // No Environment in UV — see BagViewer/OutreachBagViewer for
+          // rationale. UVLights + the meshes' uvDarkMat handle the look.
+          null
         ) : (
           <Environment
             preset={envPreset}

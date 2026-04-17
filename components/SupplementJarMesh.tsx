@@ -542,13 +542,30 @@ export default function SupplementJarMesh({
     prismaticFoilMat.needsUpdate = true;
   }, [envIntensityScale, lighting, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
 
+  // Dark stand-in — same purpose as BagMesh's uvDarkMat. When UV
+  // Blacklight is on, every Layer 1 finish (foil/chrome/prismatic/
+  // mylar) gets replaced by this near-black diffuse so the jar label
+  // base absorbs everything except the UV point lights, letting the
+  // fluorescent Layer 2/3 pixels dominate.
+  const uvDarkMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: "#1a0a2e",
+        metalness: 0,
+        roughness: 0.95,
+        envMapIntensity: 0,
+      }),
+    []
+  );
+
   // Pick the active Layer 1 material — matches BagMesh's traversal logic.
   const layer1Material: THREE.Material = useMemo(() => {
+    if (lighting === "uv") return uvDarkMat;
     if (finish === "foil") return holographicFoilMat;
     if (finish === "prismatic") return prismaticFoilMat;
     if (iridescence > 0) return multiChromeMat;
     return mylarMat;
-  }, [finish, iridescence, mylarMat, holographicFoilMat, prismaticFoilMat, multiChromeMat]);
+  }, [finish, iridescence, lighting, mylarMat, holographicFoilMat, prismaticFoilMat, multiChromeMat, uvDarkMat]);
 
   // ── Layer 2 + Layer 3 decal materials ─────────────────────────────────────
   // MeshPhysicalMaterial instead of MeshStandardMaterial so the Varnish toggle

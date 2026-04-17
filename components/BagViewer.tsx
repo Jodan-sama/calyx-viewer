@@ -1579,16 +1579,13 @@ export default function BagViewer({
             <Environment preset="studio" background={false} environmentIntensity={0.22 * envIntensity} />
           </>
         ) : isUV ? (
-          <>
-            <UVLights />
-            {/* HDRI contribution is pinned near-zero regardless of the
-                HDRI Intensity slider — the user's slider would
-                otherwise reintroduce the white studio reflections the
-                UV look is trying to kill. The BagMesh further scales
-                every material's envMapIntensity down when lighting
-                === "uv" so mylar/label don't catch the sky at all. */}
-            <Environment preset="studio" background={false} environmentIntensity={0.005} />
-          </>
+          // No Environment at all — every foil/chrome/prismatic shader
+          // self-illuminates bright colours regardless of HDRI
+          // intensity, so the only way to truly kill white reflections
+          // is to drop the IBL entirely. BagMesh swaps the Layer 1
+          // material to a plain dark diffuse under UV lighting so the
+          // body absorbs everything except the violet point lights.
+          <UVLights />
         ) : hdriIsCustom ? (
           <Environment
             files="/hdri/studio_kominka_01_1k.hdr"
