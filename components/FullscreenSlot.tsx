@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { ProductSet } from "@/lib/types";
+import { hasUVLayer, withUVLighting } from "@/lib/bagMaterial";
+import UVToggleButton from "./UVToggleButton";
 
 const OutreachBagViewer = dynamic(() => import("./OutreachBagViewer"), {
   ssr: false,
@@ -34,13 +36,22 @@ export default function FullscreenSlot({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const transparent = set.material?.backgroundMode === "transparent";
+  // UV Blacklight override — mirrors the pattern in OutreachSlot. Keeps
+  // the original material untouched and just swaps the `lighting` field
+  // when the toggle is on. Transparent bg is suppressed under UV so the
+  // backdrop stays dark enough for the fluorescent glow to read.
+  const [uvOn, setUvOn] = useState(false);
+  const canToggleUV = hasUVLayer(set.material);
+  const effectiveMaterial = canToggleUV
+    ? withUVLighting(set.material, uvOn)
+    : set.material;
+  const transparent = !uvOn && set.material?.backgroundMode === "transparent";
 
   const viewer = set.product_type === "supplement-jar" ? (
     <OutreachJarViewer
       textureUrl={set.label_image_url}
       backTextureUrl={set.material?.backImageUrl ?? null}
-      material={set.material}
+      material={effectiveMaterial}
       environment={set.environment}
       transparent={transparent}
     />
@@ -50,7 +61,7 @@ export default function FullscreenSlot({
       backTextureUrl={set.material?.backImageUrl ?? null}
       layer3FrontTextureUrl={set.material?.layer3FrontImageUrl ?? null}
       layer3BackTextureUrl={set.material?.layer3BackImageUrl ?? null}
-      material={set.material}
+      material={effectiveMaterial}
       environment={set.environment}
       transparent={transparent}
     />
@@ -68,17 +79,26 @@ export default function FullscreenSlot({
         <span className="text-white text-[12px] font-semibold tracking-[0.2em] uppercase select-none">
           {set.title}
         </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          className="text-white/70 hover:text-white text-2xl leading-none"
-          aria-label="Close fullscreen preview"
-        >
-          ×
-        </button>
+        <div className="flex items-center gap-3">
+          {canToggleUV && (
+            <UVToggleButton
+              active={uvOn}
+              onClick={() => setUvOn((v) => !v)}
+              variant="bar"
+            />
+          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="text-white/70 hover:text-white text-2xl leading-none"
+            aria-label="Close fullscreen preview"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       {/* 3D canvas — fills the remaining viewport. Relative so the

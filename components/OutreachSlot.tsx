@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProductSet } from "@/lib/types";
+import { hasUVLayer, withUVLighting } from "@/lib/bagMaterial";
+import UVToggleButton from "@/components/UVToggleButton";
 
 const SLOT_LOADER = (
   <div className="w-full h-full flex items-center justify-center bg-[#f0f2f7]">
@@ -57,15 +59,28 @@ export function ProductSlot({
    *  the bottom title bar reflects the new title without a refetch. */
   onTitleChange?: (setId: string, nextTitle: string) => Promise<void>;
 }) {
+  // UV Blacklight override — local to each slot card. When the user toggles
+  // it on, we swap the displayed material's `lighting` field to "uv" so the
+  // viewer rerenders under the blacklight preset. Turning it off reverts to
+  // the slot's saved value untouched. Gated on hasUVLayer so the pill only
+  // appears on designs with something that will actually glow.
+  const [uvOn, setUvOn] = useState(false);
+
   if (set) {
     const isFlat = set.kind === "flat-image";
+    const canToggleUV = !isFlat && hasUVLayer(set.material);
+    const effectiveMaterial = canToggleUV
+      ? withUVLighting(set.material, uvOn)
+      : set.material;
     // When the slot was saved with Background → Transparent in the
     // studio, skip the slot-card's flat blue fill so the page
     // underneath (e.g. the client site's wavy lines) reads through
     // the alpha Canvas. Border + rounded corners stay so the card
-    // still frames the 3D asset.
+    // still frames the 3D asset. UV override forces an opaque dark
+    // canvas even if the saved background was transparent, since a
+    // bright page behind a UV scene washes out the whole effect.
     const bgIsTransparent =
-      !isFlat && set.material?.backgroundMode === "transparent";
+      !isFlat && !uvOn && set.material?.backgroundMode === "transparent";
     return (
       <div
         className={`relative aspect-square rounded-[20px] overflow-hidden border border-[#272724]/10 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_28px_-10px_rgba(0,0,0,0.1)] group ${
@@ -91,7 +106,7 @@ export function ProductSlot({
           <OutreachJarViewer
             textureUrl={set.label_image_url}
             backTextureUrl={set.material?.backImageUrl ?? null}
-            material={set.material}
+            material={effectiveMaterial}
             environment={set.environment}
             transparent={bgIsTransparent}
             autoRotate
@@ -102,10 +117,22 @@ export function ProductSlot({
             backTextureUrl={set.material?.backImageUrl ?? null}
             layer3FrontTextureUrl={set.material?.layer3FrontImageUrl ?? null}
             layer3BackTextureUrl={set.material?.layer3BackImageUrl ?? null}
-            material={set.material}
+            material={effectiveMaterial}
             environment={set.environment}
             transparent={bgIsTransparent}
             autoRotate
+          />
+        )}
+
+        {/* UV Blacklight toggle — top-left so it doesn't fight the
+            top-right Edit/Expand affordances. Visible whenever the
+            slot's design has a UV-tagged layer, on both the admin
+            outreach view and the client site. */}
+        {canToggleUV && (
+          <UVToggleButton
+            active={uvOn}
+            onClick={() => setUvOn((v) => !v)}
+            variant="overlay"
           />
         )}
         {isFlat && (

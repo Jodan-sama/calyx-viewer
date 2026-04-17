@@ -225,3 +225,25 @@ export function resolveEnvironmentPreset(
       return "studio";
   }
 }
+
+/** True when the material has at least one layer tagged for UV fluorescence.
+ *  Surfaces the "View under UV Blacklight" affordance only on designs that
+ *  will actually glow — slots without any UV-tagged layer render as dark,
+ *  boring blobs under UV, so the button would be pointless. */
+export function hasUVLayer(mat: BagMaterial | null | undefined): boolean {
+  if (!mat) return false;
+  return Boolean(mat.labelUV || mat.layer2UV || mat.layer3UV);
+}
+
+/** Return `mat` with lighting swapped to "uv" when `on` is true, otherwise
+ *  the original material unchanged. Used by the UV toggle button on the
+ *  Outreach + client-site + fullscreen surfaces so the saved lighting
+ *  value is preserved and restored when the user flips UV off again. */
+export function withUVLighting(
+  mat: BagMaterial | null | undefined,
+  on: boolean
+): BagMaterial | null | undefined {
+  if (!on || !mat) return mat;
+  if (mat.lighting === "uv") return mat;
+  return { ...mat, lighting: "uv" };
+}

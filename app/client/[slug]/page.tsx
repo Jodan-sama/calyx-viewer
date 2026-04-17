@@ -15,6 +15,8 @@ import { ProductSlot, GallerySlot } from "@/components/OutreachSlot";
 import ImagePreviewModal from "@/components/ImagePreviewModal";
 import FullscreenSlot from "@/components/FullscreenSlot";
 import WigglyLines from "@/components/WigglyLines";
+import LoadingOverlay from "@/components/LoadingOverlay";
+import { brandPrimaryGradient } from "@/lib/brandTheme";
 
 export default function ClientSite({
   params,
@@ -128,12 +130,10 @@ export default function ClientSite({
             laptop widths. */}
         <div className="max-w-[1480px] mx-auto">
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <div
-                className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
-                style={{ borderColor: "var(--brand-secondary)", borderTopColor: "transparent" }}
-              />
-            </div>
+            // Dedicated LoadingOverlay below covers the whole viewport
+            // while brand + sets hydrate, so the in-main spacer just
+            // reserves vertical space to keep the layout stable.
+            <div className="py-20" />
           ) : err ? (
             <p className="text-[12px] text-red-500 bg-red-50 rounded-lg p-4">
               {err}
@@ -221,6 +221,16 @@ export default function ClientSite({
           onClose={() => setFullscreenSet(null)}
         />
       )}
+
+      {/* Intro cover — wavy pattern emanates from a centered Calyx logo
+          while brand + sets hydrate, then sweeps off once loading is
+          done. Unique to the client URL; the admin Outreach view skips
+          it because that surface's users don't need a brand reveal. */}
+      <LoadingOverlay
+        loading={loading}
+        backgroundGradient={brandPrimaryGradient(colors.primary)}
+        accentColor={hexToRgba(colors.secondary, 0.3)}
+      />
     </div>
   );
 }
