@@ -1131,20 +1131,27 @@ export default function BagViewer({
       },
     }, { collapsed: false }),
 
-    // SAVE button saves the full lighting rig to localStorage under the
-    // active environment's key. Handler routed through lightingOpsRef so
-    // the button sees live values rather than schema-build-time captures.
-    "Save Lighting for Environment": button(() =>
-      lightingOpsRef.current.save()
-    ),
-    // RESET swaps the rig back to LIGHTING_DEFAULTS and wipes the
-    // stored blob for the active env. Replaces the old portal-
-    // injected icon that used to live in the "Lighting" folder
-    // title — that folder no longer exists now that each lighting
-    // concern has its own top-level folder.
-    "Reset Lighting to Defaults": button(() =>
-      lightingOpsRef.current.reset()
-    ),
+    // Actions — kept in a dedicated folder at the end of the schema
+    // so they always render AFTER every other folder's contents.
+    //
+    // Leva quirk: top-level button() declarations registered before
+    // conditionally-rendered folder children (like the per-light
+    // R1/R2/R3/R4 sliders that only appear when their Count ≥ N)
+    // get inserted at their declaration-time position in the root
+    // list, which ends up BEFORE the late-arriving conditional
+    // children. Result: the Save/Reset rows overlap R1 Color and
+    // R1 Intensity when the user sets Rect Count to 1. Wrapping them
+    // in a folder forces Leva to render them as part of that folder's
+    // block — guaranteed last because this folder itself is the last
+    // entry in the root schema.
+    Actions: folder({
+      "Save Lighting for Environment": button(() =>
+        lightingOpsRef.current.save()
+      ),
+      "Reset Lighting to Defaults": button(() =>
+        lightingOpsRef.current.reset()
+      ),
+    }, { collapsed: false }),
     // See matStore note above — settings slot is arg2, not arg3.
   }), { store: lightStore }, []);
 

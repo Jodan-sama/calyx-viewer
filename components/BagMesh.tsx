@@ -561,21 +561,60 @@ export default function BagMesh({
   const bagScene = useMemo(() => {
     const clone = scene.clone(true);
     // The mylar-bag GLB ships with vertex normals baked pointing the
-    // *wrong* way — Debug Normals mode revealed the base rendering in
-    // olive/yellow (nz≈−1) on panels that clearly face +Z. That's
+    // *wrong* way — Debug Normals mode revealed the base rendering
+    // in olive/yellow (nz≈−1) on panels that clearly face +Z. That's
     // why spotlights produced inverted behaviour between the base
-    // (inverted stored normals) and the label (re-computed, correct
-    // normals). We overwrite every mesh's normals with a fresh
-    // computeVertexNormals() so the base agrees with the winding —
-    // matching the rest of the pipeline (label, foil, prismatic,
-    // chrome shaders all derive from or assume winding-correct
-    // normals). `DoubleSide` doesn't rescue us here: three.js only
-    // auto-flips normals for screen-space back-facing triangles, so
-    // incorrect STORED normals on front-facing triangles stay wrong.
+    // (wrong normals) and the label (winding-correct normals).
+    //
+    // Fix is two passes per mesh:
+    //
+    //   1. `computeVertexNormals()` rewrites every stored normal
+    //      from the triangle winding. That alone fixes the front
+    //      panel (its triangles wind CCW-from-+Z → +Z normals).
+    //
+    //   2. The back panel is a mirrored copy of the front, so after
+    //      matrix bake it winds the same way as the front and step 1
+    //      gives it +Z too — which is inward for the back. We walk
+    //      every vertex in WORLD space, compare normal Z sign to
+    //      position Z sign, and negate the (local) normal whenever
+    //      they disagree. Using world space is critical: individual
+    //      meshes have their own transforms that can rotate local
+    //      +Z onto world −Z; checking local-space Z would flip the
+    //      wrong vertices.
+    //
+    // |nz| > 0.3 gates out gusset / zipper edge vertices whose
+    // normals legitimately point mostly +X or +Y so they don't get
+    // falsely flipped.
+    clone.updateMatrixWorld(true);
+    const worldPos = new THREE.Vector3();
+
     clone.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh || !m.geometry) return;
-      m.geometry.computeVertexNormals();
+      const geo = m.geometry;
+      geo.computeVertexNormals();
+
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const nor = geo.attributes.normal as THREE.BufferAttribute;
+      if (!pos || !nor) return;
+
+      // Negate normals on every vertex whose world-space position
+      // has z < 0 (the back half of the bag). After
+      // computeVertexNormals() every panel's normals come out +Z
+      // (because the back was modelled as a mirrored copy of the
+      // front and inherits front-style winding after matrix bake),
+      // which is correct for the front but inverted for the back.
+      // Unconditional negation on back vertices gives them the
+      // correct outward direction. Seam vertices near z ≈ 0 are
+      // ambiguous — skip them.
+      const count = Math.min(pos.count, nor.count);
+      const POS_Z_EPS = 0.001;
+      for (let i = 0; i < count; i++) {
+        worldPos.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+        if (worldPos.z > -POS_Z_EPS) continue;
+        nor.setXYZ(i, -nor.getX(i), -nor.getY(i), -nor.getZ(i));
+      }
+      nor.needsUpdate = true;
     });
     return clone;
   }, [scene]);
