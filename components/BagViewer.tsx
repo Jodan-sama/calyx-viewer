@@ -86,10 +86,80 @@ const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
 };
 
 // ── Screenshot helper — auto-captures on load + exposes manual trigger ────────
+/**
+ * Background kinds the capture knows how to paint. "transparent" is a
+ * sentinel meaning "skip the background layer" so the page underneath
+ * reads through alpha in the thumbnail, matching the wrapper-div
+ * behaviour in the live viewer.
+ */
+interface CaptureBackground {
+  mode: "flat" | "gradient" | "transparent";
+  color1: string;
+  color2: string;
+  /** CSS gradient angle (0° = toward top), matched to Leva's 0–360 slider. */
+  angle: number;
+}
+
+/** Composite the WebGL canvas onto a 2D canvas pre-painted with the
+ *  same background the wrapper DIV would have shown, then emit a PNG
+ *  data URL. The live viewer paints its gradient / flat colour on the
+ *  DOM wrapper rather than in three.js, so `gl.domElement.toDataURL()`
+ *  alone would produce a transparent-backed thumbnail — gradients and
+ *  flat backgrounds would silently disappear from the saved preview.
+ *
+ *  Matches CSS `linear-gradient(Xdeg, c1, c2)` geometry: 0° puts c1 at
+ *  bottom and c2 at top, 90° runs left→right, etc. The gradient line
+ *  is scaled so both endpoint colours fully cover the nearest edges of
+ *  the rectangle regardless of aspect ratio.
+ */
+function paintCapture(
+  webgl: HTMLCanvasElement,
+  bg: CaptureBackground
+): string {
+  const composite = document.createElement("canvas");
+  composite.width = webgl.width;
+  composite.height = webgl.height;
+  const ctx = composite.getContext("2d");
+  if (!ctx) return webgl.toDataURL("image/png");
+
+  if (bg.mode === "flat") {
+    ctx.fillStyle = bg.color1;
+    ctx.fillRect(0, 0, composite.width, composite.height);
+  } else if (bg.mode === "gradient") {
+    // CSS 0deg = up, screen coords have y pointing down, so the
+    // direction vector toward the target is (sin θ, -cos θ). Half-
+    // extent along that axis equals |dx|*w/2 + |dy|*h/2, which keeps
+    // the gradient line long enough to cover the rectangle's corners.
+    const rad = (bg.angle * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad);
+    const w = composite.width;
+    const h = composite.height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const len = Math.abs(dx) * (w / 2) + Math.abs(dy) * (h / 2);
+    const grad = ctx.createLinearGradient(
+      cx - dx * len,
+      cy - dy * len,
+      cx + dx * len,
+      cy + dy * len
+    );
+    grad.addColorStop(0, bg.color1);
+    grad.addColorStop(1, bg.color2);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  }
+  // "transparent" → leave the composite's own transparent background.
+
+  ctx.drawImage(webgl, 0, 0);
+  return composite.toDataURL("image/png");
+}
+
 function ScreenshotCapture({
   onCapture,
   resetKey,
   captureRef,
+  background,
 }: {
   onCapture: (url: string) => void;
   resetKey: string;
@@ -97,10 +167,22 @@ function ScreenshotCapture({
    *  so callers can grab the newest frame synchronously without waiting
    *  for the React `onCapture` state update to flush. */
   captureRef?: React.MutableRefObject<(() => string | null) | null>;
+  /** Same background the wrapper DIV is currently painting. The capture
+   *  composites this under the WebGL bytes so the saved thumbnail
+   *  includes gradients / flat colours that would otherwise be lost to
+   *  canvas alpha. */
+  background: CaptureBackground;
 }) {
   const { gl } = useThree();
   const done = useRef(false);
   const frameCount = useRef(0);
+
+  // Ref mirror so the useFrame callback always reads the freshest
+  // background without needing to be recreated every time a Leva
+  // slider nudges. Writing through the ref keeps the RAF hot path free
+  // of re-allocation while still picking up live updates.
+  const bgRef = useRef(background);
+  bgRef.current = background;
 
   // Expose an imperative capture function. The return value lets the
   // caller read the data URL in the same tick that the click was
@@ -109,7 +191,7 @@ function ScreenshotCapture({
   useEffect(() => {
     if (captureRef) {
       captureRef.current = () => {
-        const url = gl.domElement.toDataURL("image/png");
+        const url = paintCapture(gl.domElement, bgRef.current);
         onCapture(url);
         return url;
       };
@@ -127,7 +209,7 @@ function ScreenshotCapture({
     frameCount.current++;
     if (frameCount.current >= 90) {
       done.current = true;
-      const url = gl.domElement.toDataURL("image/png");
+      const url = paintCapture(gl.domElement, bgRef.current);
       onCapture(url);
     }
   });
@@ -1964,6 +2046,18 @@ export default function BagViewer({
             onCapture={onScreenshot}
             resetKey={`${textureUrl ?? "default"}|${backTextureUrl ?? "default"}|${environment}`}
             captureRef={captureRef}
+            // Mirror the wrapper DIV's background into the capture so
+            // gradients + flat fills survive the screenshot. UV forces
+            // its deep-violet override the same way the wrapper does,
+            // so the thumbnail matches what the user sees on screen.
+            background={{
+              mode: isUV
+                ? "flat"
+                : (backgroundMode as "flat" | "gradient" | "transparent"),
+              color1: isUV ? "#07021a" : (backgroundColor1 as string),
+              color2: backgroundColor2 as string,
+              angle: backgroundAngle as number,
+            }}
           />
         )}
       </Suspense>
