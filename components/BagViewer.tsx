@@ -764,7 +764,13 @@ export default function BagViewer({
         },
       },
       envIntensity: {
-        label: "HDRI Intensity", value: iLighting.envIntensity, min: 0, max: 3, step: 0.01,
+        // Physical upper bound on a MeshPhysicalMaterial's
+        // envMapIntensity is effectively infinity — anything beyond
+        // the HDRI's brightest peak just looks clipped. Capping at
+        // 10 lets users push well past "natural" for dramatic
+        // mirror effects without giving them a slider that divides
+        // by zero. Use Tone Mapping → Exposure to compensate.
+        label: "HDRI Intensity", value: iLighting.envIntensity, min: 0, max: 10, step: 0.01,
       },
     }, { collapsed: false }),
 
@@ -780,8 +786,12 @@ export default function BagViewer({
           None: "none",
         },
       },
+      // Exposure is a linear pre-multiplier on all colour before
+      // tone mapping — 1.0 is neutral, <1 dims, >1 boosts. 8 is
+      // well past the point where ACES visibly clips highlights,
+      // which is usually what you want for a "hot" studio look.
       toneMappingExposure: {
-        label: "Exposure", value: 1.4, min: 0.1, max: 3, step: 0.01,
+        label: "Exposure", value: 1.4, min: 0.1, max: 8, step: 0.01,
       },
     }, { collapsed: true }),
 
@@ -822,6 +832,23 @@ export default function BagViewer({
 
     Shadows: folder({
       shadowsEnabled: { label: "Enabled", value: false },
+      // Real (direct-light) shadows need a surface to land on. The
+      // mylar bag itself casts, but without a ground plane there's
+      // nothing to receive — shadows just disappear into the sky.
+      // This toggle mounts a large invisible plane at the bag's
+      // base elevation (y = -1.265) with `receiveShadow` on; it
+      // doesn't render otherwise so the background (flat /
+      // gradient / transparent) keeps showing through.
+      shadowGround: {
+        label: "Ground Plane",
+        value: true,
+        render: (get) => get("Shadows.shadowsEnabled"),
+      },
+      shadowOpacity: {
+        label: "Ground Opacity", value: 0.35, min: 0, max: 1, step: 0.01,
+        render: (get) =>
+          get("Shadows.shadowsEnabled") && get("Shadows.shadowGround"),
+      },
       shadowMapSize: {
         label: "Map Size", value: 1024,
         options: { "Low (512)": 512, "Medium (1024)": 1024, "High (2048)": 2048, "Ultra (4096)": 4096 },
@@ -1141,6 +1168,7 @@ export default function BagViewer({
     fogEnabled, fogColor, fogNear, fogFar,
     // Shadows
     shadowsEnabled, shadowMapSize, shadowRadius,
+    shadowGround, shadowOpacity,
     // Ambient
     ambientIntensity, ambientColor,
     // Directional
@@ -1413,6 +1441,9 @@ export default function BagViewer({
             distance={14}
             decay={2}
             castShadow={shadowsEnabled}
+            shadow-mapSize-width={shadowMapSize as number}
+            shadow-mapSize-height={shadowMapSize as number}
+            shadow-radius={shadowRadius as number}
           />
         )}
         {spotCount >= 2 && (
@@ -1425,6 +1456,9 @@ export default function BagViewer({
             distance={14}
             decay={2}
             castShadow={shadowsEnabled}
+            shadow-mapSize-width={shadowMapSize as number}
+            shadow-mapSize-height={shadowMapSize as number}
+            shadow-radius={shadowRadius as number}
           />
         )}
         {spotCount >= 3 && (
@@ -1437,6 +1471,9 @@ export default function BagViewer({
             distance={14}
             decay={2}
             castShadow={shadowsEnabled}
+            shadow-mapSize-width={shadowMapSize as number}
+            shadow-mapSize-height={shadowMapSize as number}
+            shadow-radius={shadowRadius as number}
           />
         )}
         {spotCount >= 4 && (
@@ -1449,6 +1486,9 @@ export default function BagViewer({
             distance={14}
             decay={2}
             castShadow={shadowsEnabled}
+            shadow-mapSize-width={shadowMapSize as number}
+            shadow-mapSize-height={shadowMapSize as number}
+            shadow-radius={shadowRadius as number}
           />
         )}
 
@@ -1461,6 +1501,17 @@ export default function BagViewer({
             intensity={dir1Intensity}
             color={dir1Color}
             castShadow={shadowsEnabled}
+            shadow-mapSize-width={shadowMapSize as number}
+            shadow-mapSize-height={shadowMapSize as number}
+            shadow-radius={shadowRadius as number}
+            // Expand the orthographic shadow camera so a single
+            // directional light can cover the whole scene — default
+            // is a 4-unit box around origin which clips shadows for
+            // anything more than ~2 units away.
+            shadow-camera-left={-6}
+            shadow-camera-right={6}
+            shadow-camera-top={6}
+            shadow-camera-bottom={-6}
           />
         )}
         {dirCount >= 2 && (
@@ -1469,6 +1520,13 @@ export default function BagViewer({
             intensity={dir2Intensity}
             color={dir2Color}
             castShadow={shadowsEnabled}
+            shadow-mapSize-width={shadowMapSize as number}
+            shadow-mapSize-height={shadowMapSize as number}
+            shadow-radius={shadowRadius as number}
+            shadow-camera-left={-6}
+            shadow-camera-right={6}
+            shadow-camera-top={6}
+            shadow-camera-bottom={-6}
           />
         )}
 
@@ -1647,6 +1705,24 @@ export default function BagViewer({
             blur={2.5}
             far={2}
           />
+        )}
+
+        {/* Optional real-shadow receiver plane. The fake ContactShadows
+            above (or the ReflectiveFloor in Smoke) don't respond to
+            direct lights at all — they're view-angle screen-space
+            effects. When the user wants true spotlight / directional
+            shadows we need an actual geometry with receiveShadow on.
+            Using ShadowMaterial so the plane itself is invisible and
+            only the projected shadow shows, at user-tuned opacity. */}
+        {shadowsEnabled && shadowGround && (
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, -1.265, 0]}
+            receiveShadow
+          >
+            <planeGeometry args={[40, 40]} />
+            <shadowMaterial transparent opacity={shadowOpacity} />
+          </mesh>
         )}
 
         {onScreenshot && (

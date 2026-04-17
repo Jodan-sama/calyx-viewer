@@ -692,6 +692,7 @@ export default function CalyxPreview() {
           open={lightOpen}
           onToggle={() => setLightOpen((v) => !v)}
         >
+          {/* Scrollable Leva panel on top … */}
           <div className="flex-1 min-h-0 overflow-y-auto calyx-leva">
             <LevaPanel
               store={lightStore}
@@ -700,8 +701,13 @@ export default function CalyxPreview() {
               titleBar={false}
               theme={LEVA_THEME}
             />
-            {/* Top-down XY drag widget for positioning rect area lights.
-                Reads rect{1-4}X/Y off the lightStore; drags write back. */}
+          </div>
+          {/* … then the draggable XY map as a fixed-height footer that
+              always sits at the bottom of the sidebar, outside the
+              scrollable region. Prevents the map from colliding with
+              or overlapping the Leva rect-light sliders when the
+              panel gets tall enough to scroll. */}
+          <div className="flex-shrink-0 border-t border-[#e8ecf2]">
             <RectLightMap store={lightStore} />
           </div>
         </CollapsibleSidebar>
