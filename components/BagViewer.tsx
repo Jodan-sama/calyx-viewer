@@ -155,6 +155,24 @@ function RaveLights() {
   );
 }
 
+// ── UV Blacklight rig ────────────────────────────────────────────────────────
+// Two violet point lights flanking the bag from above — simulating tube-
+// style blacklight fixtures in a club — plus a deep-purple ambient so
+// non-fluorescent surfaces read as near-black rather than pure black.
+// Fluorescent pigment response is rendered in the meshes' materials
+// (emissive = UV_GLOW_COLOR) rather than via shader tricks, so the
+// scene just needs to provide a convincing dark-purple environment.
+function UVLights() {
+  return (
+    <>
+      <pointLight position={[-2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[0, 1.8, -2.5]} intensity={14} color="#aa33ff" distance={10} decay={2} />
+      <ambientLight intensity={0.08} color="#2a1155" />
+    </>
+  );
+}
+
 // ── Smoke + reflective floor scene ────────────────────────────────────────────
 // Slowly-drifting white smoke clouds behind the bag, lit from behind so the
 // volume reads against the light background, plus a light, mildly reflective
@@ -571,6 +589,10 @@ export default function BagViewer({
         label: "Material", value: iMat?.labelMaterial ?? false,
         render: (get) => get("Model.model") === "bag",
       },
+      labelUV: {
+        label: "UV Glow", value: iMat?.labelUV ?? false,
+        render: (get) => get("Model.model") === "bag",
+      },
       // Per-layer Material finish (bag Layer 2). Shown only when the
       // Material checkbox above is on — picks what substance the artwork
       // mask paints with, independently of Layer 1's finish.
@@ -629,6 +651,10 @@ export default function BagViewer({
         label: "Material", value: iMat?.layer2Material ?? false,
         render: (get) => get("Model.model") === "jar",
       },
+      layer2UV: {
+        label: "UV Glow", value: iMat?.layer2UV ?? false,
+        render: (get) => get("Model.model") === "jar",
+      },
       // Per-layer Material finish (jar Layer 2).
       layer2MatFinish: {
         label: "Layer Finish", value: iMat?.layer2MatFinish ?? "metallic",
@@ -685,6 +711,9 @@ export default function BagViewer({
       },
       layer3Material: {
         label: "Material", value: iMat?.layer3Material ?? false,
+      },
+      layer3UV: {
+        label: "UV Glow", value: iMat?.layer3UV ?? false,
       },
       // Per-layer Material finish — revealed when the Material checkbox
       // is on. Shared between bag and jar since Layer 3's render path is
@@ -754,6 +783,7 @@ export default function BagViewer({
           Forest: "forest",
           Sunset: "sunset",
           Rave: "rave",
+          "UV Blacklight": "uv",
           "Kominka Studio (custom)": "kominka",
         },
       },
@@ -1119,11 +1149,11 @@ export default function BagViewer({
     model,
     finish, metalness, roughness, bagColor,
     autoRotate,
-    labelMetalness, labelRoughness, labelVarnish, labelMaterial,
+    labelMetalness, labelRoughness, labelVarnish, labelMaterial, labelUV,
     labelMatFinish, labelMatMetalness, labelMatRoughness,
-    layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
+    layer2Metalness, layer2Roughness, layer2Varnish, layer2Material, layer2UV,
     layer2MatFinish, layer2MatMetalness, layer2MatRoughness,
-    layer3Metalness, layer3Roughness, layer3Varnish, layer3Material,
+    layer3Metalness, layer3Roughness, layer3Varnish, layer3Material, layer3UV,
     layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
   } = values;
 
@@ -1296,6 +1326,7 @@ export default function BagViewer({
     : { metalness, roughness };
 
   const isRave = lighting === "rave";
+  const isUV = lighting === "uv";
   const isSmoke = environment === "smoke";
   const isDim = environment === "dim";
 
@@ -1340,6 +1371,12 @@ export default function BagViewer({
       layer3MatFinish: layer3MatFinish as BagFinish,
       layer3MatMetalness,
       layer3MatRoughness,
+      // UV Blacklight per-layer glow toggles — only visually active
+      // when the HDRI preset is "uv" but persisted on the slot either
+      // way so the edit-roundtrip preserves the artwork tag.
+      labelUV,
+      layer2UV,
+      layer3UV,
       // Scene + full lighting rig — so reopening a saved slot restores
       // every background/fog/shadow/light setting, not just materials.
       autoRotate,
@@ -1407,6 +1444,9 @@ export default function BagViewer({
     layer3MatFinish,
     layer3MatMetalness,
     layer3MatRoughness,
+    labelUV,
+    layer2UV,
+    layer3UV,
     autoRotate,
     toneMappingCurve,
     toneMappingExposure,
@@ -1508,12 +1548,13 @@ export default function BagViewer({
       {/* Fog — optional, additive to the scene. Linear near/far style
           (not exponential) so the Leva sliders map 1:1 to world units. */}
       {fogEnabled && <fog attach="fog" args={[fogColor as string, fogNear as number, fogFar as number]} />}
-      {/* Ambient is user-controllable now. Rave preset still overrides
-          ambient to near-zero so the coloured point lights dominate; in
-          every other mode the Lighting → Ambient slider sets the value,
-          further scaled by Dim's 0.2 multiplier and coloured per the
-          Ambient folder's colour picker. */}
-      {!isRave && (
+      {/* Ambient is user-controllable now. Rave and UV presets override
+          ambient — Rave wants coloured point lights to dominate, UV
+          wants a dark-purple wash so non-fluorescent surfaces recede.
+          In every other mode the Lighting → Ambient slider sets the
+          value, further scaled by Dim's 0.2 multiplier and coloured
+          per the Ambient folder's colour picker. */}
+      {!isRave && !isUV && (
         <ambientLight
           intensity={ambientIntensity * dimScale}
           color={ambientColor as string}
@@ -1526,6 +1567,14 @@ export default function BagViewer({
             <RaveLights />
             {/* Turned way down — keeps colored lights dominant on reflections */}
             <Environment preset="studio" background={false} environmentIntensity={0.22 * envIntensity} />
+          </>
+        ) : isUV ? (
+          <>
+            <UVLights />
+            {/* HDRI is pushed way down so non-fluorescent materials read
+                as near-black; fluorescent layers emit independent of
+                the Environment so reflections don't wash them out. */}
+            <Environment preset="studio" background={false} environmentIntensity={0.06 * envIntensity} />
           </>
         ) : hdriIsCustom ? (
           <Environment
@@ -1818,6 +1867,9 @@ export default function BagViewer({
             iridescenceIOR={preset?.iridescenceIOR ?? 1.5}
             iridescenceThicknessRange={preset?.iridescenceThicknessRange ?? [100, 800]}
             finish={finish}
+            lighting={lighting as BagLighting}
+            labelUV={labelUV}
+            layer3UV={layer3UV}
             envIntensityScale={dimScale * envIntensity}
             floating={environment !== "smoke"}
           />
@@ -1859,6 +1911,9 @@ export default function BagViewer({
             layer3MatFinish={layer3MatFinish as BagFinish}
             layer3MatMetalness={layer3MatMetalness}
             layer3MatRoughness={layer3MatRoughness}
+            lighting={lighting as BagLighting}
+            layer2UV={layer2UV}
+            layer3UV={layer3UV}
             envIntensityScale={dimScale * envIntensity}
             floating={environment !== "smoke"}
           />

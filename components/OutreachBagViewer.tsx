@@ -66,6 +66,18 @@ function RaveLights() {
   );
 }
 
+// ── UV Blacklight rig (mirrors BagViewer) ────────────────────────────────────
+function UVLights() {
+  return (
+    <>
+      <pointLight position={[-2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[0, 1.8, -2.5]} intensity={14} color="#aa33ff" distance={10} decay={2} />
+      <ambientLight intensity={0.08} color="#2a1155" />
+    </>
+  );
+}
+
 // ── Smoke scene elements (mirrors BagViewer) ─────────────────────────────────
 function SmokeBackground() {
   const cloudsRef = useRef<THREE.Group>(null);
@@ -176,6 +188,7 @@ export default function OutreachBagViewer({
   const mat: BagMaterial = material ?? DEFAULT_MATERIAL;
   const surface = resolveSurface(mat);
   const isRave = mat.lighting === "rave";
+  const isUV = mat.lighting === "uv";
   const env = envProp ?? "default";
   const isSmoke = env === "smoke";
   const isDim = env === "dim";
@@ -208,6 +221,9 @@ export default function OutreachBagViewer({
       labelMatFinish={mat.labelMatFinish}
       labelMatMetalness={mat.labelMatMetalness}
       labelMatRoughness={mat.labelMatRoughness}
+      lighting={mat.lighting}
+      labelUV={mat.labelUV ?? false}
+      layer3UV={mat.layer3UV ?? false}
       // Layer 3 material settings — undefined-safe; BagMesh falls back to its
       // own defaults for saves from before Layer 3 was persisted.
       layer3Metalness={mat.layer3Metalness}
@@ -281,21 +297,29 @@ export default function OutreachBagViewer({
           color={mat.ambientColor ?? "#ffffff"}
         />
       ) : (
-        !isRave && <ambientLight intensity={0.45 * dimScale} />
+        !isRave && !isUV && <ambientLight intensity={0.45 * dimScale} />
       )}
 
       <Suspense fallback={null}>
-        {/* HDRI environment — rave preset still forces studio + low
-            intensity because "rave" isn't a valid drei preset. For
-            every other case we honour the saved material's preset +
-            intensity when the slot carries a custom rig, or fall back
-            to the legacy 1.0 intensity for older saves. */}
+        {/* HDRI environment — rave/UV presets still force studio + low
+            intensity because neither is a valid drei preset. UV goes
+            even lower than rave since fluorescent pigment response
+            should dominate, not HDRI reflections. Every other case
+            honours the saved material's preset + intensity. */}
         {isRave ? (
           <Environment
             preset="studio"
             background={false}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : 0.22
+            }
+          />
+        ) : isUV ? (
+          <Environment
+            preset="studio"
+            background={false}
+            environmentIntensity={
+              customRig ? (mat.envIntensity ?? 1) * dimScale : 0.06
             }
           />
         ) : (
@@ -307,11 +331,12 @@ export default function OutreachBagViewer({
           />
         )}
 
-        {/* Preset-driven extra lights — rave/dim add their colour
+        {/* Preset-driven extra lights — rave/UV/dim add their colour
             characters even when a custom rig is also saved, because
             they're tied to the `lighting` HDRI preset the user picked,
             not to the additive rig. Smoke env visuals live below. */}
         {isRave && <RaveLights />}
+        {isUV && <UVLights />}
         {isDim && <RainbowLights />}
 
         {/* Smoke-environment scene elements — always render when the

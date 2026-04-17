@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
+import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
 
 interface BagMeshProps {
@@ -66,6 +66,16 @@ interface BagMeshProps {
    *  flush on the reflective floor so the cast reflection joins seamlessly
    *  at the base. */
   floating?: boolean;
+
+  /** HDRI / scene preset. Only read to gate the UV-blacklight emissive
+   *  path — every other preset is handled by the viewer's scene wiring. */
+  lighting?: BagLighting;
+  /** Tag Layer 2 artwork as fluorescent. Takes effect only when
+   *  `lighting === "uv"`; emits UV_GLOW_COLOR through the artwork's
+   *  alpha so the decal glows lime-green against a dark scene. */
+  labelUV?: boolean;
+  /** Same as `labelUV` but for the stacked Layer 3 decal. */
+  layer3UV?: boolean;
 }
 
 // Base env-map intensities per material — the scale prop multiplies into these.
@@ -370,6 +380,9 @@ export default function BagMesh({
   layer3MatFinish,
   layer3MatMetalness,
   layer3MatRoughness,
+  lighting,
+  labelUV = false,
+  layer3UV = false,
   envIntensityScale = 1,
   floating = true,
 }: BagMeshProps) {
@@ -703,8 +716,21 @@ export default function BagMesh({
       frontLabelMat.bumpMap = null;
       frontLabelMat.bumpScale = 0;
     }
+    // UV Blacklight — pump up emissive from the artwork texture so the
+    // decal "glows" under violet scene lighting while dark materials
+    // around it stay near-black. Reset emissive when UV is off or the
+    // scene isn't UV so non-UV renders are unchanged.
+    if (labelUV && lighting === "uv") {
+      frontLabelMat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      frontLabelMat.emissiveMap = frontLabelTex;
+      frontLabelMat.emissiveIntensity = 2.2;
+    } else {
+      frontLabelMat.emissive = new THREE.Color(0x000000);
+      frontLabelMat.emissiveMap = null;
+      frontLabelMat.emissiveIntensity = 1;
+    }
     frontLabelMat.needsUpdate = true;
-  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, frontLabelMat]);
+  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, frontLabelMat, labelUV, lighting]);
 
   useEffect(() => {
     backLabelMat.map = backLabelTex;
@@ -724,8 +750,17 @@ export default function BagMesh({
       backLabelMat.bumpMap = null;
       backLabelMat.bumpScale = 0;
     }
+    if (labelUV && lighting === "uv") {
+      backLabelMat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      backLabelMat.emissiveMap = backLabelTex;
+      backLabelMat.emissiveIntensity = 2.2;
+    } else {
+      backLabelMat.emissive = new THREE.Color(0x000000);
+      backLabelMat.emissiveMap = null;
+      backLabelMat.emissiveIntensity = 1;
+    }
     backLabelMat.needsUpdate = true;
-  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, backLabelMat]);
+  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, backLabelMat, labelUV, lighting]);
 
   // ── Layer 3 — optional second decal layer (front + back) ─────────────────
   // Mirrors Layer 2 exactly: independent textures, alpha-bump maps driving a
@@ -807,8 +842,17 @@ export default function BagMesh({
       layer3FrontMat.bumpMap = null;
       layer3FrontMat.bumpScale = 0;
     }
+    if (layer3UV && lighting === "uv") {
+      layer3FrontMat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      layer3FrontMat.emissiveMap = layer3FrontTex;
+      layer3FrontMat.emissiveIntensity = 2.2;
+    } else {
+      layer3FrontMat.emissive = new THREE.Color(0x000000);
+      layer3FrontMat.emissiveMap = null;
+      layer3FrontMat.emissiveIntensity = 1;
+    }
     layer3FrontMat.needsUpdate = true;
-  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3FrontMat]);
+  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3FrontMat, layer3UV, lighting]);
 
   useEffect(() => {
     layer3BackMat.map = layer3BackTex;
@@ -828,8 +872,17 @@ export default function BagMesh({
       layer3BackMat.bumpMap = null;
       layer3BackMat.bumpScale = 0;
     }
+    if (layer3UV && lighting === "uv") {
+      layer3BackMat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      layer3BackMat.emissiveMap = layer3BackTex;
+      layer3BackMat.emissiveIntensity = 2.2;
+    } else {
+      layer3BackMat.emissive = new THREE.Color(0x000000);
+      layer3BackMat.emissiveMap = null;
+      layer3BackMat.emissiveIntensity = 1;
+    }
     layer3BackMat.needsUpdate = true;
-  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3BackMat]);
+  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3BackMat, layer3UV, lighting]);
 
   // ── Material-mode masked variants (Layer 2 + Layer 3, front + back) ──────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a

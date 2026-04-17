@@ -156,17 +156,22 @@ export function ProductSlot({
           </Link>
         )}
 
-        {/* Bottom title bar. In admin mode the pencil icon swaps the static
-            title for an inline <input> that commits on blur/Enter. */}
-        <TitleBar
-          title={set.title}
-          isAdmin={isAdmin}
-          onSave={
-            onTitleChange
-              ? (next) => onTitleChange(set.id, next)
-              : undefined
-          }
-        />
+        {/* Bottom title bar — only rendered on flat-image gallery tiles.
+            For 3D slots both the gradient and the title are
+            suppressed: they compete visually with the packaging and
+            the user preferred a clean frame. Admin rename still works
+            via Calyx Preview (Edit affordance top-right). */}
+        {isFlat && (
+          <TitleBar
+            title={set.title}
+            isAdmin={isAdmin}
+            onSave={
+              onTitleChange
+                ? (next) => onTitleChange(set.id, next)
+                : undefined
+            }
+          />
+        )}
       </div>
     );
   }

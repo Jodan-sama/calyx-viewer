@@ -64,6 +64,18 @@ function RaveLights() {
   );
 }
 
+// ── UV Blacklight rig (mirrors BagViewer) ────────────────────────────────────
+function UVLights() {
+  return (
+    <>
+      <pointLight position={[-2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[0, 1.8, -2.5]} intensity={14} color="#aa33ff" distance={10} decay={2} />
+      <ambientLight intensity={0.08} color="#2a1155" />
+    </>
+  );
+}
+
 // ── Smoke scene elements (mirrors BagViewer) ─────────────────────────────────
 function SmokeBackground() {
   const cloudsRef = useRef<THREE.Group>(null);
@@ -176,6 +188,7 @@ export default function OutreachJarViewer({
   const isSmoke = env === "smoke";
   const isDim = env === "dim";
   const isRave = mat.lighting === "rave";
+  const isUV = mat.lighting === "uv";
   const dimScale = isDim ? 0.2 : 1;
   // Saved slots can carry lighting = "rave" (a BagViewer concept that doesn't
   // correspond to any drei Environment preset). Resolve it to a drei-safe
@@ -195,6 +208,9 @@ export default function OutreachJarViewer({
       iridescenceThicknessRange={
         iridescenceCfg?.iridescenceThicknessRange ?? [100, 800]
       }
+      lighting={mat.lighting}
+      layer2UV={mat.layer2UV ?? false}
+      layer3UV={mat.layer3UV ?? false}
       // The saved label image lives on Layer 2 of the jar; Layer 3 is the
       // optional second stacked artwork. Both default to clear if absent
       // so the bare label finish shows through.
@@ -266,17 +282,26 @@ export default function OutreachJarViewer({
           color={mat.ambientColor ?? "#ffffff"}
         />
       ) : (
-        !isRave && <ambientLight intensity={0.45 * dimScale} />
+        !isRave && !isUV && <ambientLight intensity={0.45 * dimScale} />
       )}
 
       <Suspense fallback={null}>
-        {/* HDRI environment — see OutreachBagViewer for rationale. */}
+        {/* HDRI environment — rave/UV both force studio with low
+            intensity. See OutreachBagViewer for rationale. */}
         {isRave ? (
           <Environment
             preset="studio"
             background={false}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : 0.22
+            }
+          />
+        ) : isUV ? (
+          <Environment
+            preset="studio"
+            background={false}
+            environmentIntensity={
+              customRig ? (mat.envIntensity ?? 1) * dimScale : 0.06
             }
           />
         ) : (
@@ -289,6 +314,7 @@ export default function OutreachJarViewer({
         )}
 
         {isRave && <RaveLights />}
+        {isUV && <UVLights />}
         {isDim && <RainbowLights />}
 
         {isSmoke && (

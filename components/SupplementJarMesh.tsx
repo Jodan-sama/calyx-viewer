@@ -8,7 +8,7 @@ import {
   mergeGeometries,
   mergeVertices,
 } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
+import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
 
 // ── Assets ───────────────────────────────────────────────────────────────────
@@ -128,6 +128,13 @@ interface SupplementJarMeshProps {
    *  scene with a reflective floor), the jar sits flush on the floor with no
    *  oscillation, so the cast reflection lines up cleanly with its base. */
   floating?: boolean;
+
+  /** HDRI / scene preset. Only read to gate UV Blacklight glow per layer. */
+  lighting?: BagLighting;
+  /** Tag Layer 2 artwork as fluorescent under UV Blacklight. */
+  layer2UV?: boolean;
+  /** Tag Layer 3 artwork as fluorescent under UV Blacklight. */
+  layer3UV?: boolean;
 }
 
 // ── HSV → RGB helper for holographic texture (duplicated from BagMesh) ──────
@@ -325,6 +332,9 @@ export default function SupplementJarMesh({
   layer3MatFinish,
   layer3MatMetalness,
   layer3MatRoughness,
+  lighting,
+  layer2UV = false,
+  layer3UV = false,
   envIntensityScale = 1,
   floating = true,
 }: SupplementJarMeshProps) {
@@ -745,9 +755,18 @@ export default function SupplementJarMesh({
       layer2Mat.bumpMap = null;
       layer2Mat.bumpScale = 0;
     }
+    if (layer2UV && lighting === "uv") {
+      layer2Mat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      layer2Mat.emissiveMap = layer2Tex;
+      layer2Mat.emissiveIntensity = 2.2;
+    } else {
+      layer2Mat.emissive = new THREE.Color(0x000000);
+      layer2Mat.emissiveMap = null;
+      layer2Mat.emissiveIntensity = 1;
+    }
     layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer2Mat.needsUpdate = true;
-  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat]);
+  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat, layer2UV, lighting]);
 
   // Resolve the effective Material-mode surface for a given layer. Each
   // layer can override Layer 1's finish via `matFinish`; when omitted or set
@@ -917,9 +936,18 @@ export default function SupplementJarMesh({
       layer3Mat.bumpMap = null;
       layer3Mat.bumpScale = 0;
     }
+    if (layer3UV && lighting === "uv") {
+      layer3Mat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      layer3Mat.emissiveMap = layer3Tex;
+      layer3Mat.emissiveIntensity = 2.2;
+    } else {
+      layer3Mat.emissive = new THREE.Color(0x000000);
+      layer3Mat.emissiveMap = null;
+      layer3Mat.emissiveIntensity = 1;
+    }
     layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
     layer3Mat.needsUpdate = true;
-  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat]);
+  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat, layer3UV, lighting]);
 
   // ── Scene processing (body + label) ───────────────────────────────────────
   // Body: hide the old glb's built-in label (any non-Plastic primitive) and

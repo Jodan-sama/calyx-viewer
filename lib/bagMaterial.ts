@@ -30,7 +30,14 @@ export type BagLighting =
   | "city"
   | "forest"
   | "sunset"
-  | "rave";
+  | "rave"
+  | "uv";
+
+/** Yellow-green glow applied to UV-tagged layers when lighting === "uv".
+ *  Approximates the visible re-emission fluorescent pigments give off
+ *  under real blacklight. Kept as a constant so the studio, the
+ *  bag/jar meshes, and the outreach viewers agree on the same hue. */
+export const UV_GLOW_COLOR = "#b6ff00";
 
 export interface FinishPreset {
   metalness: number;
@@ -105,6 +112,14 @@ export interface BagMaterial {
   layer3MatFinish?: BagFinish;
   layer3MatMetalness?: number;
   layer3MatRoughness?: number;
+
+  /* UV Blacklight glow — per-layer opt-in. Only takes effect when the
+   * scene's lighting preset is "uv". Tags the layer's artwork as
+   * fluorescent so it emits UV_GLOW_COLOR through the artwork's alpha,
+   * while other finishes stay dark under the violet ambient. */
+  labelUV?: boolean;
+  layer2UV?: boolean;
+  layer3UV?: boolean;
 
   /* Saved artwork URLs for every layer past the primary front. The front
    * image lives in the slot's `label_image_url` column; these cover the
