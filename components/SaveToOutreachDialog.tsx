@@ -175,9 +175,11 @@ export default function SaveToOutreachDialog({
     };
   }, [brandMode, selectedBrandId]);
 
+  // Title is optional — empty saves are allowed so the user isn't
+  // blocked on naming a slot before shipping it. Brand is still
+  // required because the slot has to land somewhere.
   const canSubmit =
     !!source &&
-    !!title.trim() &&
     (brandMode === "existing" ? !!selectedBrandId : !!newBrandName.trim());
 
   const handleSubmit = useCallback(
@@ -434,7 +436,7 @@ export default function SaveToOutreachDialog({
                   onClick={() => setSlot(s)}
                   title={
                     occupied
-                      ? `Slot ${s}: ${occupied.title} (will be replaced)`
+                      ? `Slot ${s}: ${occupied.title || "Untitled"} (will be replaced)`
                       : `Slot ${s} — empty`
                   }
                   className={`relative aspect-square rounded-lg overflow-hidden border transition ${
@@ -489,21 +491,23 @@ export default function SaveToOutreachDialog({
           </div>
           <p className="text-[10px] text-[#272724]/40">
             {occupiedBySlot.get(slot)
-              ? `Slot ${slot} is taken — saving will replace “${occupiedBySlot.get(slot)!.title}”.`
+              ? `Slot ${slot} is taken — saving will replace “${occupiedBySlot.get(slot)!.title || "Untitled"}”.`
               : "Saving to an occupied slot will replace what's there."}
           </p>
         </div>
 
-        {/* Title */}
+        {/* Title — optional. Left blank, the slot just renders without a
+            label (3D slots already suppress titles; gallery tiles show
+            an empty caption bar). */}
         <div className="space-y-2">
           <label className="text-[10px] font-medium tracking-[0.18em] uppercase text-[#272724]/55">
-            Title
+            Title <span className="text-[#272724]/30 normal-case tracking-normal">(optional)</span>
           </label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Prime Flower – Hero Bag"
+            placeholder="Leave blank to skip naming"
             className="w-full h-10 px-3 rounded-lg border border-[#e8ecf2] text-[12px] focus:outline-none focus:border-[#0033A1]"
           />
         </div>
