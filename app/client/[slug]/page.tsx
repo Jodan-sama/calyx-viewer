@@ -16,7 +16,6 @@ import ImagePreviewModal from "@/components/ImagePreviewModal";
 import FullscreenSlot from "@/components/FullscreenSlot";
 import WigglyLines from "@/components/WigglyLines";
 import LoadingOverlay from "@/components/LoadingOverlay";
-import { brandPrimaryGradient } from "@/lib/brandTheme";
 
 export default function ClientSite({
   params,
@@ -222,15 +221,11 @@ export default function ClientSite({
         />
       )}
 
-      {/* Intro cover — wavy pattern emanates from a centered Calyx logo
-          while brand + sets hydrate, then sweeps off once loading is
-          done. Unique to the client URL; the admin Outreach view skips
-          it because that surface's users don't need a brand reveal. */}
-      <LoadingOverlay
-        loading={loading}
-        backgroundGradient={brandPrimaryGradient(colors.primary)}
-        accentColor={hexToRgba(colors.secondary, 0.3)}
-      />
+      {/* Intro cover — fixed Calyx-blue palette (not brand-derived) so
+          every client site opens on the same moment of recognition
+          before per-brand theming takes over. Stays up for at least 3
+          seconds to give assets a predictable decode window. */}
+      <LoadingOverlay loading={loading} />
     </div>
   );
 }
