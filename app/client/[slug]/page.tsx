@@ -88,7 +88,19 @@ export default function ClientSite({
           the slots and gallery underneath. Re-mounted on accent change so
           the canvas re-paints with the new stroke colour. */}
       <div className="absolute inset-0 z-0 pointer-events-none">
-        <WigglyLines key={colors.secondary} seed={5} color={wavyColor} />
+        {/* logoRiders paints ~4 Calyx diamond icons riding specific
+            waves — filled in the same secondary accent colour as the
+            lines so they read as part of the ambient motion rather
+            than a separate layer on top. Only enabled here (not on
+            the landing page) since it's a brand-identity flourish
+            that belongs on the outbound client site. */}
+        <WigglyLines
+          key={colors.secondary}
+          seed={5}
+          color={wavyColor}
+          logoRiders={4}
+          logoSize={36}
+        />
       </div>
 
       {/* Centered logo header, no admin chrome */}

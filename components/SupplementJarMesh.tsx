@@ -469,9 +469,10 @@ export default function SupplementJarMesh({
           wN.y * 0.25
         );
         vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        vec3 chrome = vec3(0.90, 0.93, 0.98);
-        vec3 prismBand = mix(chrome, rainbow, 0.72);
-        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
+        vec3 pastel = rainbow * 0.28 + 0.72;
+        vec3 chrome = vec3(0.92, 0.94, 0.98);
+        vec3 prismBand = mix(chrome, pastel, 0.72);
+        vec3 finalColor = mix(chrome * 0.95, prismBand, 0.55 + grating * 0.45);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.60);
         gl_FragColor.a = 1.0;`
       );
@@ -696,9 +697,10 @@ export default function SupplementJarMesh({
           rot.y * 4.5 + ndv * 1.4 + wN.x * 0.35 + wN.y * 0.25
         );
         vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        vec3 chrome = vec3(0.90, 0.93, 0.98);
-        vec3 prismBand = mix(chrome, rainbow, 0.72);
-        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
+        vec3 pastel = rainbow * 0.28 + 0.72;
+        vec3 chrome = vec3(0.92, 0.94, 0.98);
+        vec3 prismBand = mix(chrome, pastel, 0.72);
+        vec3 finalColor = mix(chrome * 0.95, prismBand, 0.55 + grating * 0.45);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.85);
         // gl_FragColor.a left alone — alphaMap chain handles cutout.`
       );

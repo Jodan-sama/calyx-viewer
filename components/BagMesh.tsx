@@ -459,11 +459,15 @@ export default function BagMesh({
           wN.y * 0.25
         );
         vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        vec3 chrome = vec3(0.90, 0.93, 0.98);
-        vec3 prismBand = mix(chrome, rainbow, 0.72);
-        // Grating modulates how strongly the rainbow reads — peaks show full
-        // colour, troughs pull toward slightly-darkened chrome.
-        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
+        // Lift the rainbow into a pastel range (min 0.72, max 1.0) so
+        // saturated hues read as powdered pastels — soft pink,
+        // peach, mint, lavender, sky — rather than primary rainbow.
+        vec3 pastel = rainbow * 0.28 + 0.72;
+        vec3 chrome = vec3(0.92, 0.94, 0.98);
+        vec3 prismBand = mix(chrome, pastel, 0.72);
+        // Grating modulates how strongly the pastel reads — peaks
+        // show full tint, troughs pull toward off-white chrome.
+        vec3 finalColor = mix(chrome * 0.95, prismBand, 0.55 + grating * 0.45);
         gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.60);
         gl_FragColor.a = 1.0;`
       );
