@@ -587,10 +587,22 @@ export default function BagMesh({
     // falsely flipped.
     clone.updateMatrixWorld(true);
     const worldPos = new THREE.Vector3();
+    const worldN = new THREE.Vector3();
+    const normalMat = new THREE.Matrix3();
 
     clone.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh || !m.geometry) return;
+
+      // CRITICAL: `Object3D.clone(true)` creates new Mesh instances
+      // but shares each mesh's geometry reference with the original.
+      // Without this explicit geometry.clone() we'd mutate the
+      // useGLTF-cached geometry in place — which becomes a real bug
+      // under React Strict Mode / HMR because the useMemo re-runs
+      // atop already-mutated state, flipping normals twice and
+      // landing us back at the inverted starting state. Clone the
+      // geometry so our mutations stay scoped to this render tree.
+      m.geometry = m.geometry.clone();
       const geo = m.geometry;
       geo.computeVertexNormals();
 
@@ -598,21 +610,27 @@ export default function BagMesh({
       const nor = geo.attributes.normal as THREE.BufferAttribute;
       if (!pos || !nor) return;
 
-      // Negate normals on every vertex whose world-space position
-      // has z < 0 (the back half of the bag). After
-      // computeVertexNormals() every panel's normals come out +Z
-      // (because the back was modelled as a mirrored copy of the
-      // front and inherits front-style winding after matrix bake),
-      // which is correct for the front but inverted for the back.
-      // Unconditional negation on back vertices gives them the
-      // correct outward direction. Seam vertices near z ≈ 0 are
-      // ambiguous — skip them.
+      normalMat.getNormalMatrix(m.matrixWorld);
+
+      // Flip any vertex whose world-space normal Z sign disagrees
+      // with its world-space position Z sign. Front panel wants
+      // +Z outward normals; back wants -Z. Gate on |worldN.z| > 0.3
+      // so side gusset / bottom-pleat vertices whose normals
+      // legitimately point dominantly sideways aren't spuriously
+      // negated. Seam-adjacent vertices (|pz| ≈ 0) are ambiguous —
+      // skip them.
       const count = Math.min(pos.count, nor.count);
+      const NZ_THRESHOLD = 0.3;
       const POS_Z_EPS = 0.001;
       for (let i = 0; i < count; i++) {
         worldPos.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
-        if (worldPos.z > -POS_Z_EPS) continue;
-        nor.setXYZ(i, -nor.getX(i), -nor.getY(i), -nor.getZ(i));
+        worldN.fromBufferAttribute(nor, i).applyMatrix3(normalMat).normalize();
+        if (Math.abs(worldPos.z) < POS_Z_EPS) continue;
+        if (Math.abs(worldN.z) < NZ_THRESHOLD) continue;
+        const wantSign = worldPos.z > 0 ? 1 : -1;
+        if (worldN.z * wantSign < 0) {
+          nor.setXYZ(i, -nor.getX(i), -nor.getY(i), -nor.getZ(i));
+        }
       }
       nor.needsUpdate = true;
     });
