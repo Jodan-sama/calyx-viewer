@@ -69,13 +69,16 @@ export default function CalyxPreview() {
   const [backTextureUrl, setBackTextureUrl] = useState<string>(
     DEFAULT_BACK_TEXTURE
   );
+  const [backFile, setBackFile] = useState<File | null>(null);
   const [backFileName, setBackFileName] = useState<string | null>(null);
 
   // Bag-only Layer 3 artwork — stacks on top of Layer 2 (the existing
   // front/back decals). Starts empty; appears only when the user uploads.
   const [layer3FrontTextureUrl, setLayer3FrontTextureUrl] = useState<string | null>(null);
+  const [layer3FrontFile, setLayer3FrontFile] = useState<File | null>(null);
   const [layer3FrontFileName, setLayer3FrontFileName] = useState<string | null>(null);
   const [layer3BackTextureUrl, setLayer3BackTextureUrl] = useState<string | null>(null);
+  const [layer3BackFile, setLayer3BackFile] = useState<File | null>(null);
   const [layer3BackFileName, setLayer3BackFileName] = useState<string | null>(null);
 
   // Active model — driven by BagViewer's Leva dropdown, surfaced here so the
@@ -140,10 +143,13 @@ export default function CalyxPreview() {
   // when the fetch completes — that forces BagViewer to remount with
   // the new initial values. `hydrating` guards the viewer so it doesn't
   // flash with defaults before the server data arrives.
-  const [hydrating, setHydrating] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return new URLSearchParams(window.location.search).has("open");
-  });
+  // Pessimistic on SSR: we can't check `?open=` without window, and a
+  // false-then-true flip would let BagViewer mount with defaults first —
+  // polluting the shared Leva stores (matStore/lightStore) before
+  // hydrated initialMaterial/initialModel arrive. Starting `true` delays
+  // BagViewer mount by one effect tick for all page loads; the effect
+  // below clears it immediately when there's no open param.
+  const [hydrating, setHydrating] = useState<boolean>(true);
   const [hydrationKey, setHydrationKey] = useState(0);
   const [initialMaterial, setInitialMaterial] = useState<BagMaterial | undefined>(undefined);
   const [initialEnvironment, setInitialEnvironment] = useState<SceneEnvironment | undefined>(undefined);
@@ -170,7 +176,10 @@ export default function CalyxPreview() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const openId = params.get("open");
-    if (!openId) return;
+    if (!openId) {
+      setHydrating(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -179,24 +188,65 @@ export default function CalyxPreview() {
           setHydrating(false);
           return;
         }
-        // Seed the artwork URLs so both BagMesh's Layer 2 front and Layer 3
-        // (jar) pick up the saved label. The back texture is deliberately
-        // left at its current default — saves only persist one image today.
+        // Seed every artwork URL that was saved so the studio rehydrates
+        // the full decal stack — front, back, and bag Layer 3 front/back.
+        // The three secondary URLs live on `set.material.*ImageUrl`
+        // (saveSet stashes them there to avoid a schema migration).
         setFrontTextureUrl(set.label_image_url);
         setFrontFileName(set.title);
-        // Pretend the fetched image is also the "frontFile" so "Save to
-        // Outreach" stays enabled from the outset. The blob download is
-        // deferred until the user clicks save (handled in handleSubmit).
-        try {
-          const res = await fetch(set.label_image_url);
-          const blob = await res.blob();
-          if (cancelled) return;
-          const file = new File([blob], set.title || "artwork.png", {
-            type: blob.type || "image/png",
-          });
-          setFrontFile(file);
-        } catch {
-          /* non-fatal — save button just stays disabled until user uploads */
+
+        // Fetch each saved URL into a File so the Save button stays
+        // enabled on reopen without requiring the user to re-upload.
+        // Runs in parallel and tolerates individual failures so one
+        // bad URL doesn't prevent the others from rehydrating.
+        const fetchFile = async (
+          url: string,
+          fallbackName: string
+        ): Promise<File | null> => {
+          try {
+            const res = await fetch(url);
+            const blob = await res.blob();
+            return new File([blob], fallbackName, {
+              type: blob.type || "image/png",
+            });
+          } catch {
+            return null;
+          }
+        };
+        const [
+          frontFileResult,
+          backFileResult,
+          l3FrontFileResult,
+          l3BackFileResult,
+        ] = await Promise.all([
+          fetchFile(set.label_image_url, set.title || "artwork.png"),
+          set.material?.backImageUrl
+            ? fetchFile(set.material.backImageUrl, "back.png")
+            : Promise.resolve(null),
+          set.material?.layer3FrontImageUrl
+            ? fetchFile(set.material.layer3FrontImageUrl, "layer3-front.png")
+            : Promise.resolve(null),
+          set.material?.layer3BackImageUrl
+            ? fetchFile(set.material.layer3BackImageUrl, "layer3-back.png")
+            : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        if (frontFileResult) setFrontFile(frontFileResult);
+
+        if (set.material?.backImageUrl) {
+          setBackTextureUrl(set.material.backImageUrl);
+          setBackFileName("back.png");
+          if (backFileResult) setBackFile(backFileResult);
+        }
+        if (set.material?.layer3FrontImageUrl) {
+          setLayer3FrontTextureUrl(set.material.layer3FrontImageUrl);
+          setLayer3FrontFileName("layer3-front.png");
+          if (l3FrontFileResult) setLayer3FrontFile(l3FrontFileResult);
+        }
+        if (set.material?.layer3BackImageUrl) {
+          setLayer3BackTextureUrl(set.material.layer3BackImageUrl);
+          setLayer3BackFileName("layer3-back.png");
+          if (l3BackFileResult) setLayer3BackFile(l3BackFileResult);
         }
 
         // Push resolved state into Leva defaults via BagViewer props, then
@@ -262,6 +312,7 @@ export default function CalyxPreview() {
       if (!raw) return;
       const file = await convertImageToWebPLogged(raw, "back");
       setBackTextureUrl((prev) => swapBlobUrl(prev, URL.createObjectURL(file)));
+      setBackFile(file);
       setBackFileName(file.name);
       setMagicImageUrl(null);
       setMagicError(null);
@@ -280,6 +331,7 @@ export default function CalyxPreview() {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
       });
+      setLayer3FrontFile(file);
       setLayer3FrontFileName(file.name);
     },
     []
@@ -294,6 +346,7 @@ export default function CalyxPreview() {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
       });
+      setLayer3BackFile(file);
       setLayer3BackFileName(file.name);
     },
     []
@@ -545,6 +598,13 @@ export default function CalyxPreview() {
               setSaveSource({
                 kind: "bag-3d",
                 file: frontFile,
+                // Secondary artwork layers — uploaded alongside the primary
+                // front image so every decal the user configured round-trips
+                // through the outreach slot. Bag can use all three; jar only
+                // reads `backFile` (which becomes its Layer 3 texture).
+                backFile,
+                layer3FrontFile,
+                layer3BackFile,
                 material: materialRef.current,
                 productType:
                   currentModel === "jar" ? "supplement-jar" : "mylar-bag",

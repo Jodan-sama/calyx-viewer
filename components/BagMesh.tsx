@@ -258,28 +258,28 @@ function buildLabelGeo(
   }
   geo.computeVertexNormals();
 
-  // Panel-outward safety: if the whole panel's computed normals
-  // consensus-point inward (sum-of-Z sign disagrees with the side's
-  // outward sign), flip every normal in one go. Cheap insurance
-  // against a future GLB swap whose winding convention differs;
-  // current bag doesn't trip this but it's essentially free to keep.
-  // Global flip preserves the relative orientation of zipper-edge
-  // normals that legitimately point in non-Z directions.
+  // Per-vertex outward-flip: any vertex whose stored normal Z
+  // disagrees with this panel's outward direction gets negated
+  // individually. A whole-panel consensus-sum check (the prior
+  // version) silently skipped the fix whenever mixed winding made
+  // the panel's average Z land near zero — leaving a subset of
+  // triangles with inward normals that killed direct-light
+  // reflections on the back-panel artwork in lit scenes like Rave.
   const normals = geo.attributes.normal as THREE.BufferAttribute;
-  let sumZ = 0;
-  for (let i = 0; i < normals.count; i++) sumZ += normals.getZ(i);
   const outwardZ = side === "front" ? 1 : -1;
-  if (sumZ * outwardZ < 0) {
-    for (let i = 0; i < normals.count; i++) {
+  let flipped = false;
+  for (let i = 0; i < normals.count; i++) {
+    if (normals.getZ(i) * outwardZ < 0) {
       normals.setXYZ(
         i,
         -normals.getX(i),
         -normals.getY(i),
         -normals.getZ(i)
       );
+      flipped = true;
     }
-    normals.needsUpdate = true;
   }
+  if (flipped) normals.needsUpdate = true;
 
   // UVs from XY bounds; mirror U for the back so art reads correctly.
   const posAttr = geo.attributes.position as THREE.BufferAttribute;

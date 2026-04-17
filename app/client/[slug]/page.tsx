@@ -13,6 +13,7 @@ import {
 } from "@/lib/brandTheme";
 import { ProductSlot, GallerySlot } from "@/components/OutreachSlot";
 import ImagePreviewModal from "@/components/ImagePreviewModal";
+import FullscreenSlot from "@/components/FullscreenSlot";
 import WigglyLines from "@/components/WigglyLines";
 
 export default function ClientSite({
@@ -31,6 +32,10 @@ export default function ClientSite({
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(
     null
   );
+  // Full-screen 3D slot preview — set when the user clicks the Expand
+  // affordance on a 3D hero tile. Cleared via the modal's close button,
+  // Escape, or a click on the top/bottom chrome.
+  const [fullscreenSet, setFullscreenSet] = useState<ProductSet | null>(null);
 
   useEffect(() => {
     if (!supabaseConfigured) return;
@@ -169,6 +174,7 @@ export default function ClientSite({
                       index={i}
                       set={heroBySlot.get(i)}
                       onOpenImage={(src, alt) => setPreview({ src, alt })}
+                      onExpand={(s) => setFullscreenSet(s)}
                     />
                   ))}
                 </div>
@@ -206,6 +212,13 @@ export default function ClientSite({
           src={preview.src}
           alt={preview.alt}
           onClose={() => setPreview(null)}
+        />
+      )}
+
+      {fullscreenSet && (
+        <FullscreenSlot
+          set={fullscreenSet}
+          onClose={() => setFullscreenSet(null)}
         />
       )}
     </div>

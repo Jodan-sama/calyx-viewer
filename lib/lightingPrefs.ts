@@ -22,30 +22,74 @@
 
 import type { SceneEnvironment } from "./types";
 
+type Vec3 = { x: number; y: number; z: number };
+
 /** Every value the Leva `Lighting` folder controls. Position uses
  *  Leva's `{x, y, z}` vector shape so the stored blob is a direct
  *  image of the Leva `values` subset — we can drop it straight into
- *  `setLeva(stored)` without any field mapping. */
+ *  `setLeva(stored)` without any field mapping.
+ *
+ *  The original SavedLighting only covered ambient + HDRI + spotlights
+ *  (the controls the UI shipped with on day 1). Later additions — tone
+ *  mapping, background, fog, shadows, directional / point / rect-area
+ *  lights — are listed here with optional `?` markers so old stored
+ *  blobs still parse cleanly; `loadLightingForEnv` merges them over
+ *  `LIGHTING_DEFAULTS` so every field always has a value at use time. */
 export type SavedLighting = {
   ambientIntensity: number;
+  ambientColor?: string;
   envIntensity: number;
+
+  /* HDRI preset + tone mapping */
+  lighting?: string;
+  toneMappingCurve?: string;
+  toneMappingExposure?: number;
+
+  /* Background */
+  backgroundMode?: string;
+  backgroundColor1?: string;
+  backgroundColor2?: string;
+  backgroundAngle?: number;
+
+  /* Fog */
+  fogEnabled?: boolean;
+  fogColor?: string;
+  fogNear?: number;
+  fogFar?: number;
+
+  /* Shadows */
+  shadowsEnabled?: boolean;
+  shadowGround?: boolean;
+  shadowOpacity?: number;
+  shadowMapSize?: number;
+  shadowRadius?: number;
+
+  /* Directional lights */
+  dirCount?: number;
+  dir1Color?: string; dir1Intensity?: number; dir1Pos?: Vec3;
+  dir2Color?: string; dir2Intensity?: number; dir2Pos?: Vec3;
+
+  /* Spotlights (original) */
   spotCount: number;
+  spot1Color: string; spot1Intensity: number; spot1Pos: Vec3;
+  spot2Color: string; spot2Intensity: number; spot2Pos: Vec3;
+  spot3Color: string; spot3Intensity: number; spot3Pos: Vec3;
+  spot4Color: string; spot4Intensity: number; spot4Pos: Vec3;
 
-  spot1Color: string;
-  spot1Intensity: number;
-  spot1Pos: { x: number; y: number; z: number };
+  /* Point lights */
+  pointCount?: number;
+  point1Color?: string; point1Intensity?: number; point1Pos?: Vec3;
+  point2Color?: string; point2Intensity?: number; point2Pos?: Vec3;
+  point3Color?: string; point3Intensity?: number; point3Pos?: Vec3;
+  point4Color?: string; point4Intensity?: number; point4Pos?: Vec3;
 
-  spot2Color: string;
-  spot2Intensity: number;
-  spot2Pos: { x: number; y: number; z: number };
-
-  spot3Color: string;
-  spot3Intensity: number;
-  spot3Pos: { x: number; y: number; z: number };
-
-  spot4Color: string;
-  spot4Intensity: number;
-  spot4Pos: { x: number; y: number; z: number };
+  /* Rect area lights */
+  rectCount?: number;
+  rectBothSides?: boolean;
+  rect1Color?: string; rect1Intensity?: number; rect1Width?: number; rect1Height?: number; rect1X?: number; rect1Y?: number; rect1Z?: number;
+  rect2Color?: string; rect2Intensity?: number; rect2Width?: number; rect2Height?: number; rect2X?: number; rect2Y?: number; rect2Z?: number;
+  rect3Color?: string; rect3Intensity?: number; rect3Width?: number; rect3Height?: number; rect3X?: number; rect3Y?: number; rect3Z?: number;
+  rect4Color?: string; rect4Intensity?: number; rect4Width?: number; rect4Height?: number; rect4X?: number; rect4Y?: number; rect4Z?: number;
 };
 
 /** The baseline rig every Reset snaps back to, and the fallback used

@@ -376,6 +376,101 @@ export default function BagViewer({
     [iEnv]
   );
 
+  // Resolve every scene/lighting Leva default with a three-tier fallback:
+  // (1) the saved slot's material JSON wins when the field is present
+  // (slot-persisted, travels across browsers), (2) the localStorage
+  // per-env rig fills gaps (fields that existed before full-slot
+  // persistence shipped), (3) hardcoded defaults seed first-time users.
+  // All Leva `value:` entries in the Lighting schema below read from
+  // this memo so the reopen flow hydrates the full rig without us
+  // threading 80+ individual iMat?.X ?? fallback chains through each
+  // control definition.
+  const iL = useMemo(() => ({
+    lighting: iMat?.lighting ?? "studio",
+    envIntensity: iMat?.envIntensity ?? iLighting.envIntensity,
+    toneMappingCurve: iMat?.toneMappingCurve ?? "aces",
+    toneMappingExposure: iMat?.toneMappingExposure ?? 1.4,
+    backgroundMode: iMat?.backgroundMode ?? "flat",
+    backgroundColor1: iMat?.backgroundColor1 ?? "#eef1f8",
+    backgroundColor2: iMat?.backgroundColor2 ?? "#c4cdd8",
+    backgroundAngle: iMat?.backgroundAngle ?? 180,
+    fogEnabled: iMat?.fogEnabled ?? false,
+    fogColor: iMat?.fogColor ?? "#cccccc",
+    fogNear: iMat?.fogNear ?? 2,
+    fogFar: iMat?.fogFar ?? 10,
+    shadowsEnabled: iMat?.shadowsEnabled ?? false,
+    shadowGround: iMat?.shadowGround ?? true,
+    shadowOpacity: iMat?.shadowOpacity ?? 0.35,
+    shadowMapSize: iMat?.shadowMapSize ?? 1024,
+    shadowRadius: iMat?.shadowRadius ?? 4,
+    ambientIntensity: iMat?.ambientIntensity ?? iLighting.ambientIntensity,
+    ambientColor: iMat?.ambientColor ?? "#ffffff",
+    dirCount: iMat?.dirCount ?? 0,
+    dir1Color: iMat?.dir1Color ?? "#ffffff",
+    dir1Intensity: iMat?.dir1Intensity ?? 2,
+    dir1Pos: iMat?.dir1Pos ?? { x: 3, y: 5, z: 3 },
+    dir2Color: iMat?.dir2Color ?? "#e8d8ff",
+    dir2Intensity: iMat?.dir2Intensity ?? 1,
+    dir2Pos: iMat?.dir2Pos ?? { x: -3, y: 5, z: -3 },
+    spotCount: iMat?.spotCount ?? iLighting.spotCount,
+    spot1Color: iMat?.spot1Color ?? iLighting.spot1Color,
+    spot1Intensity: iMat?.spot1Intensity ?? iLighting.spot1Intensity,
+    spot1Pos: iMat?.spot1Pos ?? iLighting.spot1Pos,
+    spot2Color: iMat?.spot2Color ?? iLighting.spot2Color,
+    spot2Intensity: iMat?.spot2Intensity ?? iLighting.spot2Intensity,
+    spot2Pos: iMat?.spot2Pos ?? iLighting.spot2Pos,
+    spot3Color: iMat?.spot3Color ?? iLighting.spot3Color,
+    spot3Intensity: iMat?.spot3Intensity ?? iLighting.spot3Intensity,
+    spot3Pos: iMat?.spot3Pos ?? iLighting.spot3Pos,
+    spot4Color: iMat?.spot4Color ?? iLighting.spot4Color,
+    spot4Intensity: iMat?.spot4Intensity ?? iLighting.spot4Intensity,
+    spot4Pos: iMat?.spot4Pos ?? iLighting.spot4Pos,
+    pointCount: iMat?.pointCount ?? 0,
+    point1Color: iMat?.point1Color ?? "#ffffff",
+    point1Intensity: iMat?.point1Intensity ?? 20,
+    point1Pos: iMat?.point1Pos ?? { x: 2, y: 2, z: 2 },
+    point2Color: iMat?.point2Color ?? "#ffaa88",
+    point2Intensity: iMat?.point2Intensity ?? 20,
+    point2Pos: iMat?.point2Pos ?? { x: -2, y: 2, z: 2 },
+    point3Color: iMat?.point3Color ?? "#88aaff",
+    point3Intensity: iMat?.point3Intensity ?? 20,
+    point3Pos: iMat?.point3Pos ?? { x: 0, y: 2, z: -3 },
+    point4Color: iMat?.point4Color ?? "#ffffff",
+    point4Intensity: iMat?.point4Intensity ?? 20,
+    point4Pos: iMat?.point4Pos ?? { x: 0, y: 3, z: 0 },
+    rectCount: iMat?.rectCount ?? 0,
+    rectBothSides: iMat?.rectBothSides ?? true,
+    rect1Color: iMat?.rect1Color ?? "#ffffff",
+    rect1Intensity: iMat?.rect1Intensity ?? 12,
+    rect1Width: iMat?.rect1Width ?? 2,
+    rect1Height: iMat?.rect1Height ?? 2,
+    rect1X: iMat?.rect1X ?? -2,
+    rect1Y: iMat?.rect1Y ?? 0,
+    rect1Z: iMat?.rect1Z ?? 3,
+    rect2Color: iMat?.rect2Color ?? "#fff2d8",
+    rect2Intensity: iMat?.rect2Intensity ?? 10,
+    rect2Width: iMat?.rect2Width ?? 2,
+    rect2Height: iMat?.rect2Height ?? 2,
+    rect2X: iMat?.rect2X ?? 2,
+    rect2Y: iMat?.rect2Y ?? 0,
+    rect2Z: iMat?.rect2Z ?? 3,
+    rect3Color: iMat?.rect3Color ?? "#d8e8ff",
+    rect3Intensity: iMat?.rect3Intensity ?? 8,
+    rect3Width: iMat?.rect3Width ?? 2,
+    rect3Height: iMat?.rect3Height ?? 2,
+    rect3X: iMat?.rect3X ?? 0,
+    rect3Y: iMat?.rect3Y ?? -3,
+    rect3Z: iMat?.rect3Z ?? 2,
+    rect4Color: iMat?.rect4Color ?? "#ffffff",
+    rect4Intensity: iMat?.rect4Intensity ?? 6,
+    rect4Width: iMat?.rect4Width ?? 2,
+    rect4Height: iMat?.rect4Height ?? 2,
+    rect4X: iMat?.rect4X ?? 0,
+    rect4Y: iMat?.rect4Y ?? 3,
+    rect4Z: iMat?.rect4Z ?? 4,
+    autoRotate: iMat?.autoRotate ?? false,
+  }), [iMat, iLighting]);
+
   // Handlers the Lighting folder's SAVE / RESET controls call into.
   // These need to close over setLeva and the current `environment`
   // (so SAVE goes to the *active* env, not the initial one). Leva's
@@ -511,32 +606,32 @@ export default function BagViewer({
       },
       // Jar Layer 2 — artwork-mode metalness / roughness / varnish.
       layer2Metalness: {
-        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
+        label: "Metalness", value: iMat?.layer2Metalness ?? 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
           !get("Layer 2.layer2Varnish") &&
           !get("Layer 2.layer2Material"),
       },
       layer2Roughness: {
-        label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
+        label: "Roughness", value: iMat?.layer2Roughness ?? 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
           !get("Layer 2.layer2Varnish") &&
           !get("Layer 2.layer2Material"),
       },
       layer2Varnish: {
-        label: "Varnish", value: false,
+        label: "Varnish", value: iMat?.layer2Varnish ?? false,
         render: (get) =>
           get("Model.model") === "jar" &&
           !get("Layer 2.layer2Material"),
       },
       layer2Material: {
-        label: "Material", value: false,
+        label: "Material", value: iMat?.layer2Material ?? false,
         render: (get) => get("Model.model") === "jar",
       },
       // Per-layer Material finish (jar Layer 2).
       layer2MatFinish: {
-        label: "Layer Finish", value: "metallic",
+        label: "Layer Finish", value: iMat?.layer2MatFinish ?? "metallic",
         options: {
           Metallic: "metallic",
           Matte: "matte",
@@ -552,14 +647,14 @@ export default function BagViewer({
           get("Layer 2.layer2Material"),
       },
       layer2MatMetalness: {
-        label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        label: "Layer Metalness", value: iMat?.layer2MatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Layer 2.layer2Material") &&
           get("Layer 2.layer2MatFinish") === "custom",
       },
       layer2MatRoughness: {
-        label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        label: "Layer Roughness", value: iMat?.layer2MatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Model.model") === "jar" &&
           get("Layer 2.layer2Material") &&
@@ -573,29 +668,29 @@ export default function BagViewer({
       // away when they can't contribute (custom sliders only matter with
       // Finish=Custom, etc.).
       layer3Metalness: {
-        label: "Metalness", value: 0.1, min: 0, max: 1, step: 0.01,
+        label: "Metalness", value: iMat?.layer3Metalness ?? 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           !get("Layer 3.layer3Varnish") &&
           !get("Layer 3.layer3Material"),
       },
       layer3Roughness: {
-        label: "Roughness", value: 0.5, min: 0, max: 1, step: 0.01,
+        label: "Roughness", value: iMat?.layer3Roughness ?? 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
           !get("Layer 3.layer3Varnish") &&
           !get("Layer 3.layer3Material"),
       },
       layer3Varnish: {
-        label: "Varnish", value: false,
+        label: "Varnish", value: iMat?.layer3Varnish ?? false,
         render: (get) => !get("Layer 3.layer3Material"),
       },
       layer3Material: {
-        label: "Material", value: false,
+        label: "Material", value: iMat?.layer3Material ?? false,
       },
       // Per-layer Material finish — revealed when the Material checkbox
       // is on. Shared between bag and jar since Layer 3's render path is
       // model-agnostic in this panel.
       layer3MatFinish: {
-        label: "Layer Finish", value: "metallic",
+        label: "Layer Finish", value: iMat?.layer3MatFinish ?? "metallic",
         options: {
           Metallic: "metallic",
           Matte: "matte",
@@ -609,13 +704,13 @@ export default function BagViewer({
         render: (get) => get("Layer 3.layer3Material"),
       },
       layer3MatMetalness: {
-        label: "Layer Metalness", value: 0.92, min: 0, max: 1, step: 0.01,
+        label: "Layer Metalness", value: iMat?.layer3MatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Layer 3.layer3Material") &&
           get("Layer 3.layer3MatFinish") === "custom",
       },
       layer3MatRoughness: {
-        label: "Layer Roughness", value: 0.08, min: 0, max: 1, step: 0.01,
+        label: "Layer Roughness", value: iMat?.layer3MatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
         render: (get) =>
           get("Layer 3.layer3Material") &&
           get("Layer 3.layer3MatFinish") === "custom",
@@ -626,7 +721,7 @@ export default function BagViewer({
       // Auto Rotate stays in the Materials sidebar since it's a
       // camera/view concern rather than a lighting one. The HDRI
       // preset + intensity moved to the Lighting sidebar.
-      autoRotate: { label: "Auto Rotate", value: false },
+      autoRotate: { label: "Auto Rotate", value: iL.autoRotate },
     }, { collapsed: false }),
     // NOTE: when useControls is given a factory, the hook settings
     // (including `store`) go in the SECOND arg and deps in the
@@ -651,7 +746,7 @@ export default function BagViewer({
 
     HDRI: folder({
       lighting: {
-        label: "Preset", value: iMat?.lighting ?? "studio",
+        label: "Preset", value: iL.lighting,
         options: {
           Studio: "studio",
           Warehouse: "warehouse",
@@ -663,19 +758,13 @@ export default function BagViewer({
         },
       },
       envIntensity: {
-        // Physical upper bound on a MeshPhysicalMaterial's
-        // envMapIntensity is effectively infinity — anything beyond
-        // the HDRI's brightest peak just looks clipped. Capping at
-        // 10 lets users push well past "natural" for dramatic
-        // mirror effects without giving them a slider that divides
-        // by zero. Use Tone Mapping → Exposure to compensate.
-        label: "HDRI Intensity", value: iLighting.envIntensity, min: 0, max: 10, step: 0.01,
+        label: "HDRI Intensity", value: iL.envIntensity, min: 0, max: 10, step: 0.01,
       },
     }, { collapsed: false }),
 
     "Tone Mapping": folder({
       toneMappingCurve: {
-        label: "Curve", value: "aces",
+        label: "Curve", value: iL.toneMappingCurve,
         options: {
           "ACES Filmic": "aces",
           AgX: "agx",
@@ -685,353 +774,327 @@ export default function BagViewer({
           None: "none",
         },
       },
-      // Exposure is a linear pre-multiplier on all colour before
-      // tone mapping — 1.0 is neutral, <1 dims, >1 boosts. 8 is
-      // well past the point where ACES visibly clips highlights,
-      // which is usually what you want for a "hot" studio look.
       toneMappingExposure: {
-        label: "Exposure", value: 1.4, min: 0.1, max: 8, step: 0.01,
+        label: "Exposure", value: iL.toneMappingExposure, min: 0.1, max: 8, step: 0.01,
       },
     }, { collapsed: true }),
 
     Background: folder({
       backgroundMode: {
-        label: "Mode", value: "flat",
+        label: "Mode", value: iL.backgroundMode,
         options: { Flat: "flat", Gradient: "gradient", Transparent: "transparent" },
       },
       backgroundColor1: {
-        label: "Color 1", value: "#eef1f8",
+        label: "Color 1", value: iL.backgroundColor1,
         render: (get) => get("Background.backgroundMode") !== "transparent",
       },
       backgroundColor2: {
-        label: "Color 2", value: "#c4cdd8",
+        label: "Color 2", value: iL.backgroundColor2,
         render: (get) => get("Background.backgroundMode") === "gradient",
       },
       backgroundAngle: {
-        label: "Angle (deg)", value: 180, min: 0, max: 360, step: 1,
+        label: "Angle (deg)", value: iL.backgroundAngle, min: 0, max: 360, step: 1,
         render: (get) => get("Background.backgroundMode") === "gradient",
       },
     }, { collapsed: true }),
 
     Fog: folder({
-      fogEnabled: { label: "Enabled", value: false },
+      fogEnabled: { label: "Enabled", value: iL.fogEnabled },
       fogColor: {
-        label: "Color", value: "#cccccc",
+        label: "Color", value: iL.fogColor,
         render: (get) => get("Fog.fogEnabled"),
       },
       fogNear: {
-        label: "Near", value: 2, min: 0, max: 20, step: 0.1,
+        label: "Near", value: iL.fogNear, min: 0, max: 20, step: 0.1,
         render: (get) => get("Fog.fogEnabled"),
       },
       fogFar: {
-        label: "Far", value: 10, min: 0, max: 50, step: 0.1,
+        label: "Far", value: iL.fogFar, min: 0, max: 50, step: 0.1,
         render: (get) => get("Fog.fogEnabled"),
       },
     }, { collapsed: true }),
 
     Shadows: folder({
-      shadowsEnabled: { label: "Enabled", value: false },
-      // Real (direct-light) shadows need a surface to land on. The
-      // mylar bag itself casts, but without a ground plane there's
-      // nothing to receive — shadows just disappear into the sky.
-      // This toggle mounts a large invisible plane at the bag's
-      // base elevation (y = -1.265) with `receiveShadow` on; it
-      // doesn't render otherwise so the background (flat /
-      // gradient / transparent) keeps showing through. Kept visible
-      // regardless of the Enabled toggle so users can find it and
-      // understand what it does before flipping shadows on.
+      shadowsEnabled: { label: "Enabled", value: iL.shadowsEnabled },
       shadowGround: {
         label: "Ground Plane",
-        value: true,
+        value: iL.shadowGround,
       },
       shadowOpacity: {
-        label: "Ground Opacity", value: 0.35, min: 0, max: 1, step: 0.01,
+        label: "Ground Opacity", value: iL.shadowOpacity, min: 0, max: 1, step: 0.01,
         render: (get) => get("Shadows.shadowGround"),
       },
       shadowMapSize: {
-        label: "Map Size", value: 1024,
+        label: "Map Size", value: iL.shadowMapSize,
         options: { "Low (512)": 512, "Medium (1024)": 1024, "High (2048)": 2048, "Ultra (4096)": 4096 },
         render: (get) => get("Shadows.shadowsEnabled"),
       },
       shadowRadius: {
-        label: "Softness", value: 4, min: 0, max: 16, step: 0.1,
+        label: "Softness", value: iL.shadowRadius, min: 0, max: 16, step: 0.1,
         render: (get) => get("Shadows.shadowsEnabled"),
       },
     }, { collapsed: true }),
 
     Ambient: folder({
       ambientIntensity: {
-        label: "Intensity", value: iLighting.ambientIntensity, min: 0, max: 3, step: 0.01,
+        label: "Intensity", value: iL.ambientIntensity, min: 0, max: 3, step: 0.01,
       },
-      ambientColor: { label: "Color", value: "#ffffff" },
+      ambientColor: { label: "Color", value: iL.ambientColor },
     }, { collapsed: false }),
 
     "Directional Lights": folder({
-      dirCount: { label: "Count", value: 0, min: 0, max: 2, step: 1 },
+      dirCount: { label: "Count", value: iL.dirCount, min: 0, max: 2, step: 1 },
       dir1Color: {
-        label: "D1 Color", value: "#ffffff",
+        label: "D1 Color", value: iL.dir1Color,
         render: (get) => get("Directional Lights.dirCount") >= 1,
       },
       dir1Intensity: {
-        label: "D1 Intensity", value: 2, min: 0, max: 10, step: 0.1,
+        label: "D1 Intensity", value: iL.dir1Intensity, min: 0, max: 10, step: 0.1,
         render: (get) => get("Directional Lights.dirCount") >= 1,
       },
       dir1Pos: {
-        label: "D1 Position", value: { x: 3, y: 5, z: 3 }, step: 0.1,
+        label: "D1 Position", value: iL.dir1Pos, step: 0.1,
         render: (get) => get("Directional Lights.dirCount") >= 1,
       },
       dir2Color: {
-        label: "D2 Color", value: "#e8d8ff",
+        label: "D2 Color", value: iL.dir2Color,
         render: (get) => get("Directional Lights.dirCount") >= 2,
       },
       dir2Intensity: {
-        label: "D2 Intensity", value: 1, min: 0, max: 10, step: 0.1,
+        label: "D2 Intensity", value: iL.dir2Intensity, min: 0, max: 10, step: 0.1,
         render: (get) => get("Directional Lights.dirCount") >= 2,
       },
       dir2Pos: {
-        label: "D2 Position", value: { x: -3, y: 5, z: -3 }, step: 0.1,
+        label: "D2 Position", value: iL.dir2Pos, step: 0.1,
         render: (get) => get("Directional Lights.dirCount") >= 2,
       },
     }, { collapsed: true }),
 
     Spotlights: folder({
       spotCount: {
-        label: "Count", value: iLighting.spotCount, min: 0, max: 4, step: 1,
+        label: "Count", value: iL.spotCount, min: 0, max: 4, step: 1,
       },
       spot1Color: {
-        label: "S1 Color", value: iLighting.spot1Color,
+        label: "S1 Color", value: iL.spot1Color,
         render: (get) => get("Spotlights.spotCount") >= 1,
       },
       spot1Intensity: {
-        label: "S1 Intensity", value: iLighting.spot1Intensity, min: 0, max: 200, step: 1,
+        label: "S1 Intensity", value: iL.spot1Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Spotlights.spotCount") >= 1,
       },
       spot1Pos: {
-        label: "S1 Position", value: iLighting.spot1Pos, step: 0.1,
+        label: "S1 Position", value: iL.spot1Pos, step: 0.1,
         render: (get) => get("Spotlights.spotCount") >= 1,
       },
       spot2Color: {
-        label: "S2 Color", value: iLighting.spot2Color,
+        label: "S2 Color", value: iL.spot2Color,
         render: (get) => get("Spotlights.spotCount") >= 2,
       },
       spot2Intensity: {
-        label: "S2 Intensity", value: iLighting.spot2Intensity, min: 0, max: 200, step: 1,
+        label: "S2 Intensity", value: iL.spot2Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Spotlights.spotCount") >= 2,
       },
       spot2Pos: {
-        label: "S2 Position", value: iLighting.spot2Pos, step: 0.1,
+        label: "S2 Position", value: iL.spot2Pos, step: 0.1,
         render: (get) => get("Spotlights.spotCount") >= 2,
       },
       spot3Color: {
-        label: "S3 Color", value: iLighting.spot3Color,
+        label: "S3 Color", value: iL.spot3Color,
         render: (get) => get("Spotlights.spotCount") >= 3,
       },
       spot3Intensity: {
-        label: "S3 Intensity", value: iLighting.spot3Intensity, min: 0, max: 200, step: 1,
+        label: "S3 Intensity", value: iL.spot3Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Spotlights.spotCount") >= 3,
       },
       spot3Pos: {
-        label: "S3 Position", value: iLighting.spot3Pos, step: 0.1,
+        label: "S3 Position", value: iL.spot3Pos, step: 0.1,
         render: (get) => get("Spotlights.spotCount") >= 3,
       },
       spot4Color: {
-        label: "S4 Color", value: iLighting.spot4Color,
+        label: "S4 Color", value: iL.spot4Color,
         render: (get) => get("Spotlights.spotCount") >= 4,
       },
       spot4Intensity: {
-        label: "S4 Intensity", value: iLighting.spot4Intensity, min: 0, max: 200, step: 1,
+        label: "S4 Intensity", value: iL.spot4Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Spotlights.spotCount") >= 4,
       },
       spot4Pos: {
-        label: "S4 Position", value: iLighting.spot4Pos, step: 0.1,
+        label: "S4 Position", value: iL.spot4Pos, step: 0.1,
         render: (get) => get("Spotlights.spotCount") >= 4,
       },
     }, { collapsed: false }),
 
     "Point Lights": folder({
-      pointCount: { label: "Count", value: 0, min: 0, max: 4, step: 1 },
+      pointCount: { label: "Count", value: iL.pointCount, min: 0, max: 4, step: 1 },
       point1Color: {
-        label: "P1 Color", value: "#ffffff",
+        label: "P1 Color", value: iL.point1Color,
         render: (get) => get("Point Lights.pointCount") >= 1,
       },
       point1Intensity: {
-        label: "P1 Intensity", value: 20, min: 0, max: 200, step: 1,
+        label: "P1 Intensity", value: iL.point1Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Point Lights.pointCount") >= 1,
       },
       point1Pos: {
-        label: "P1 Position", value: { x: 2, y: 2, z: 2 }, step: 0.1,
+        label: "P1 Position", value: iL.point1Pos, step: 0.1,
         render: (get) => get("Point Lights.pointCount") >= 1,
       },
       point2Color: {
-        label: "P2 Color", value: "#ffaa88",
+        label: "P2 Color", value: iL.point2Color,
         render: (get) => get("Point Lights.pointCount") >= 2,
       },
       point2Intensity: {
-        label: "P2 Intensity", value: 20, min: 0, max: 200, step: 1,
+        label: "P2 Intensity", value: iL.point2Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Point Lights.pointCount") >= 2,
       },
       point2Pos: {
-        label: "P2 Position", value: { x: -2, y: 2, z: 2 }, step: 0.1,
+        label: "P2 Position", value: iL.point2Pos, step: 0.1,
         render: (get) => get("Point Lights.pointCount") >= 2,
       },
       point3Color: {
-        label: "P3 Color", value: "#88aaff",
+        label: "P3 Color", value: iL.point3Color,
         render: (get) => get("Point Lights.pointCount") >= 3,
       },
       point3Intensity: {
-        label: "P3 Intensity", value: 20, min: 0, max: 200, step: 1,
+        label: "P3 Intensity", value: iL.point3Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Point Lights.pointCount") >= 3,
       },
       point3Pos: {
-        label: "P3 Position", value: { x: 0, y: 2, z: -3 }, step: 0.1,
+        label: "P3 Position", value: iL.point3Pos, step: 0.1,
         render: (get) => get("Point Lights.pointCount") >= 3,
       },
       point4Color: {
-        label: "P4 Color", value: "#ffffff",
+        label: "P4 Color", value: iL.point4Color,
         render: (get) => get("Point Lights.pointCount") >= 4,
       },
       point4Intensity: {
-        label: "P4 Intensity", value: 20, min: 0, max: 200, step: 1,
+        label: "P4 Intensity", value: iL.point4Intensity, min: 0, max: 200, step: 1,
         render: (get) => get("Point Lights.pointCount") >= 4,
       },
       point4Pos: {
-        label: "P4 Position", value: { x: 0, y: 3, z: 0 }, step: 0.1,
+        label: "P4 Position", value: iL.point4Pos, step: 0.1,
         render: (get) => get("Point Lights.pointCount") >= 4,
       },
     }, { collapsed: true }),
 
     "Rect Area Lights": folder({
-      // Rect lights emit in a single direction (toward their target —
-      // here, world origin). A light positioned in front of the bag
-      // therefore illuminates only the front-facing artwork; the
-      // back stays dark, which is physically correct but breaks the
-      // "I want a product-photo preview where both sides read" UX.
-      // When this toggle is on, every active rect light gets a mirror
-      // twin at `z = -z` that also aims at origin — net effect: the
-      // back panel's artwork picks up the same light(s) the front
-      // does, no need to add matching rect lights by hand on both
-      // sides. Turn off for physically-accurate single-side lighting.
       rectBothSides: {
-        label: "Wrap Both Sides", value: true,
+        label: "Wrap Both Sides", value: iL.rectBothSides,
       },
-      rectCount: { label: "Count", value: 0, min: 0, max: 4, step: 1 },
+      rectCount: { label: "Count", value: iL.rectCount, min: 0, max: 4, step: 1 },
       // Rect 1
       rect1Color: {
-        label: "R1 Color", value: "#ffffff",
+        label: "R1 Color", value: iL.rect1Color,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
       rect1Intensity: {
-        label: "R1 Intensity", value: 12, min: 0, max: 100, step: 0.5,
+        label: "R1 Intensity", value: iL.rect1Intensity, min: 0, max: 100, step: 0.5,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
       rect1Width: {
-        label: "R1 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R1 Width", value: iL.rect1Width, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
       rect1Height: {
-        label: "R1 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R1 Height", value: iL.rect1Height, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
-      // XY are primarily driven by the top-down drag map below the
-      // Leva panel, but we surface them as sliders too so the user
-      // has a numeric fallback. Z is slider-only.
       rect1X: {
-        label: "R1 X", value: -2, min: -6, max: 6, step: 0.05,
+        label: "R1 X", value: iL.rect1X, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
       rect1Y: {
-        label: "R1 Y", value: 0, min: -6, max: 6, step: 0.05,
+        label: "R1 Y", value: iL.rect1Y, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
       rect1Z: {
-        label: "R1 Z (height)", value: 3, min: -6, max: 6, step: 0.05,
+        label: "R1 Z (height)", value: iL.rect1Z, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 1,
       },
       // Rect 2
       rect2Color: {
-        label: "R2 Color", value: "#fff2d8",
+        label: "R2 Color", value: iL.rect2Color,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       rect2Intensity: {
-        label: "R2 Intensity", value: 10, min: 0, max: 100, step: 0.5,
+        label: "R2 Intensity", value: iL.rect2Intensity, min: 0, max: 100, step: 0.5,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       rect2Width: {
-        label: "R2 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R2 Width", value: iL.rect2Width, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       rect2Height: {
-        label: "R2 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R2 Height", value: iL.rect2Height, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       rect2X: {
-        label: "R2 X", value: 2, min: -6, max: 6, step: 0.05,
+        label: "R2 X", value: iL.rect2X, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       rect2Y: {
-        label: "R2 Y", value: 0, min: -6, max: 6, step: 0.05,
+        label: "R2 Y", value: iL.rect2Y, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       rect2Z: {
-        label: "R2 Z (height)", value: 3, min: -6, max: 6, step: 0.05,
+        label: "R2 Z (height)", value: iL.rect2Z, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 2,
       },
       // Rect 3
       rect3Color: {
-        label: "R3 Color", value: "#d8e8ff",
+        label: "R3 Color", value: iL.rect3Color,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       rect3Intensity: {
-        label: "R3 Intensity", value: 8, min: 0, max: 100, step: 0.5,
+        label: "R3 Intensity", value: iL.rect3Intensity, min: 0, max: 100, step: 0.5,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       rect3Width: {
-        label: "R3 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R3 Width", value: iL.rect3Width, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       rect3Height: {
-        label: "R3 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R3 Height", value: iL.rect3Height, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       rect3X: {
-        label: "R3 X", value: 0, min: -6, max: 6, step: 0.05,
+        label: "R3 X", value: iL.rect3X, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       rect3Y: {
-        label: "R3 Y", value: -3, min: -6, max: 6, step: 0.05,
+        label: "R3 Y", value: iL.rect3Y, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       rect3Z: {
-        label: "R3 Z (height)", value: 2, min: -6, max: 6, step: 0.05,
+        label: "R3 Z (height)", value: iL.rect3Z, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 3,
       },
       // Rect 4
       rect4Color: {
-        label: "R4 Color", value: "#ffffff",
+        label: "R4 Color", value: iL.rect4Color,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
       rect4Intensity: {
-        label: "R4 Intensity", value: 6, min: 0, max: 100, step: 0.5,
+        label: "R4 Intensity", value: iL.rect4Intensity, min: 0, max: 100, step: 0.5,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
       rect4Width: {
-        label: "R4 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R4 Width", value: iL.rect4Width, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
       rect4Height: {
-        label: "R4 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        label: "R4 Height", value: iL.rect4Height, min: 0.1, max: 10, step: 0.1,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
       rect4X: {
-        label: "R4 X", value: 0, min: -6, max: 6, step: 0.05,
+        label: "R4 X", value: iL.rect4X, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
       rect4Y: {
-        label: "R4 Y", value: 3, min: -6, max: 6, step: 0.05,
+        label: "R4 Y", value: iL.rect4Y, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
       rect4Z: {
-        label: "R4 Z (height)", value: 4, min: -6, max: 6, step: 0.05,
+        label: "R4 Z (height)", value: iL.rect4Z, min: -6, max: 6, step: 0.05,
         render: (get) => get("Rect Area Lights.rectCount") >= 4,
       },
     }, { collapsed: false }),
@@ -1110,19 +1173,58 @@ export default function BagViewer({
   // captures its callback by reference at schema-build time (once per
   // mount), so we can't close over `values` directly — each render
   // refreshes this ref instead and the handlers read from it.
+  // Full rig snapshot — mirrors every Lighting-sidebar Leva control so
+  // the "Save Lighting for Environment" button writes the complete
+  // per-env rig to localStorage (not just the ambient+spot subset the
+  // first version supported). Extending SavedLighting with optional
+  // fields keeps old localStorage blobs forward-compatible.
   const lightingValuesRef = useRef<SavedLighting>({
-    ambientIntensity, envIntensity, spotCount,
+    ambientIntensity, ambientColor, envIntensity,
+    lighting,
+    toneMappingCurve, toneMappingExposure,
+    backgroundMode, backgroundColor1, backgroundColor2, backgroundAngle,
+    fogEnabled, fogColor, fogNear, fogFar,
+    shadowsEnabled, shadowGround, shadowOpacity, shadowMapSize: shadowMapSize as number, shadowRadius,
+    dirCount, dir1Color, dir1Intensity, dir1Pos, dir2Color, dir2Intensity, dir2Pos,
+    spotCount,
     spot1Color, spot1Intensity, spot1Pos,
     spot2Color, spot2Intensity, spot2Pos,
     spot3Color, spot3Intensity, spot3Pos,
     spot4Color, spot4Intensity, spot4Pos,
+    pointCount,
+    point1Color, point1Intensity, point1Pos,
+    point2Color, point2Intensity, point2Pos,
+    point3Color, point3Intensity, point3Pos,
+    point4Color, point4Intensity, point4Pos,
+    rectCount, rectBothSides,
+    rect1Color, rect1Intensity, rect1Width, rect1Height, rect1X, rect1Y, rect1Z,
+    rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
+    rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
+    rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
   });
   lightingValuesRef.current = {
-    ambientIntensity, envIntensity, spotCount,
+    ambientIntensity, ambientColor, envIntensity,
+    lighting,
+    toneMappingCurve, toneMappingExposure,
+    backgroundMode, backgroundColor1, backgroundColor2, backgroundAngle,
+    fogEnabled, fogColor, fogNear, fogFar,
+    shadowsEnabled, shadowGround, shadowOpacity, shadowMapSize: shadowMapSize as number, shadowRadius,
+    dirCount, dir1Color, dir1Intensity, dir1Pos, dir2Color, dir2Intensity, dir2Pos,
+    spotCount,
     spot1Color, spot1Intensity, spot1Pos,
     spot2Color, spot2Intensity, spot2Pos,
     spot3Color, spot3Intensity, spot3Pos,
     spot4Color, spot4Intensity, spot4Pos,
+    pointCount,
+    point1Color, point1Intensity, point1Pos,
+    point2Color, point2Intensity, point2Pos,
+    point3Color, point3Intensity, point3Pos,
+    point4Color, point4Intensity, point4Pos,
+    rectCount, rectBothSides,
+    rect1Color, rect1Intensity, rect1Width, rect1Height, rect1X, rect1Y, rect1Z,
+    rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
+    rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
+    rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
   };
 
   // Same trick for the current environment — the SAVE handler needs
@@ -1154,11 +1256,19 @@ export default function BagViewer({
   }
 
   // When the user switches environments, load that env's stored rig
-  // (or fall back to LIGHTING_DEFAULTS). The first run on mount
-  // sets the values the factory already seeded — harmless double-set.
+  // (or fall back to LIGHTING_DEFAULTS). Skip the first run so the
+  // factory-form useControls' iL-seeded values (which already prefer
+  // iMat over localStorage) don't get clobbered on mount of a reopened
+  // slot — otherwise a saved slot's custom rig would be overwritten
+  // by whichever env the user's browser last saved to localStorage.
   // Unsaved edits in the previous env are intentionally discarded;
   // users commit with SAVE before switching.
+  const didMountLightingEffectRef = useRef(false);
   useEffect(() => {
+    if (!didMountLightingEffectRef.current) {
+      didMountLightingEffectRef.current = true;
+      return;
+    }
     const env = environment as SceneEnvironment;
     const stored = loadLightingForEnv(env);
     setLightLeva((stored ?? LIGHTING_DEFAULTS) as unknown as Record<string, unknown>);
@@ -1216,6 +1326,59 @@ export default function BagViewer({
       labelMatFinish: labelMatFinish as BagFinish,
       labelMatMetalness,
       labelMatRoughness,
+      layer2Metalness,
+      layer2Roughness,
+      layer2Varnish,
+      layer2Material,
+      layer2MatFinish: layer2MatFinish as BagFinish,
+      layer2MatMetalness,
+      layer2MatRoughness,
+      layer3Metalness,
+      layer3Roughness,
+      layer3Varnish,
+      layer3Material,
+      layer3MatFinish: layer3MatFinish as BagFinish,
+      layer3MatMetalness,
+      layer3MatRoughness,
+      // Scene + full lighting rig — so reopening a saved slot restores
+      // every background/fog/shadow/light setting, not just materials.
+      autoRotate,
+      toneMappingCurve,
+      toneMappingExposure,
+      backgroundMode,
+      backgroundColor1,
+      backgroundColor2,
+      backgroundAngle,
+      fogEnabled,
+      fogColor,
+      fogNear,
+      fogFar,
+      shadowsEnabled,
+      shadowMapSize,
+      shadowRadius,
+      shadowGround,
+      shadowOpacity,
+      ambientIntensity,
+      ambientColor,
+      envIntensity,
+      dirCount,
+      dir1Color, dir1Intensity, dir1Pos,
+      dir2Color, dir2Intensity, dir2Pos,
+      spotCount,
+      spot1Color, spot1Intensity, spot1Pos,
+      spot2Color, spot2Intensity, spot2Pos,
+      spot3Color, spot3Intensity, spot3Pos,
+      spot4Color, spot4Intensity, spot4Pos,
+      pointCount,
+      point1Color, point1Intensity, point1Pos,
+      point2Color, point2Intensity, point2Pos,
+      point3Color, point3Intensity, point3Pos,
+      point4Color, point4Intensity, point4Pos,
+      rectCount, rectBothSides,
+      rect1Color, rect1Intensity, rect1Width, rect1Height, rect1X, rect1Y, rect1Z,
+      rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
+      rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
+      rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
     });
   }, [
     finish,
@@ -1230,6 +1393,57 @@ export default function BagViewer({
     labelMatFinish,
     labelMatMetalness,
     labelMatRoughness,
+    layer2Metalness,
+    layer2Roughness,
+    layer2Varnish,
+    layer2Material,
+    layer2MatFinish,
+    layer2MatMetalness,
+    layer2MatRoughness,
+    layer3Metalness,
+    layer3Roughness,
+    layer3Varnish,
+    layer3Material,
+    layer3MatFinish,
+    layer3MatMetalness,
+    layer3MatRoughness,
+    autoRotate,
+    toneMappingCurve,
+    toneMappingExposure,
+    backgroundMode,
+    backgroundColor1,
+    backgroundColor2,
+    backgroundAngle,
+    fogEnabled,
+    fogColor,
+    fogNear,
+    fogFar,
+    shadowsEnabled,
+    shadowMapSize,
+    shadowRadius,
+    shadowGround,
+    shadowOpacity,
+    ambientIntensity,
+    ambientColor,
+    envIntensity,
+    dirCount,
+    dir1Color, dir1Intensity, dir1Pos,
+    dir2Color, dir2Intensity, dir2Pos,
+    spotCount,
+    spot1Color, spot1Intensity, spot1Pos,
+    spot2Color, spot2Intensity, spot2Pos,
+    spot3Color, spot3Intensity, spot3Pos,
+    spot4Color, spot4Intensity, spot4Pos,
+    pointCount,
+    point1Color, point1Intensity, point1Pos,
+    point2Color, point2Intensity, point2Pos,
+    point3Color, point3Intensity, point3Pos,
+    point4Color, point4Intensity, point4Pos,
+    rectCount, rectBothSides,
+    rect1Color, rect1Intensity, rect1Width, rect1Height, rect1X, rect1Y, rect1Z,
+    rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
+    rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
+    rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
     onMaterialChange,
   ]);
 

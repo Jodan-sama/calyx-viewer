@@ -86,6 +86,76 @@ export interface BagMaterial {
   labelMatMetalness?: number;
   /** Custom roughness when `labelMatFinish === "custom"`. */
   labelMatRoughness?: number;
+
+  /* Jar Layer 2 — separate from bag's `label*` above so model-switch state
+   * stays independent. All optional for back-compat with older saves. */
+  layer2Metalness?: number;
+  layer2Roughness?: number;
+  layer2Varnish?: boolean;
+  layer2Material?: boolean;
+  layer2MatFinish?: BagFinish;
+  layer2MatMetalness?: number;
+  layer2MatRoughness?: number;
+
+  /* Layer 3 — shared between bag (stacked decal) and jar (second label). */
+  layer3Metalness?: number;
+  layer3Roughness?: number;
+  layer3Varnish?: boolean;
+  layer3Material?: boolean;
+  layer3MatFinish?: BagFinish;
+  layer3MatMetalness?: number;
+  layer3MatRoughness?: number;
+
+  /* Saved artwork URLs for every layer past the primary front. The front
+   * image lives in the slot's `label_image_url` column; these cover the
+   * back (bag Layer 2 back / jar Layer 3) and bag Layer 3 front/back.
+   * Undefined → playback uses the default or skips that decal. */
+  backImageUrl?: string;
+  layer3FrontImageUrl?: string;
+  layer3BackImageUrl?: string;
+
+  /* Scene + full lighting rig — saved per-slot so the look travels with
+   * the configuration, not just the user's browser localStorage. Every
+   * field is optional so older saves and fresh slots fall back to
+   * hardcoded defaults without blowing up. */
+  autoRotate?: boolean;
+  toneMappingCurve?: string;
+  toneMappingExposure?: number;
+  backgroundMode?: string;
+  backgroundColor1?: string;
+  backgroundColor2?: string;
+  backgroundAngle?: number;
+  fogEnabled?: boolean;
+  fogColor?: string;
+  fogNear?: number;
+  fogFar?: number;
+  shadowsEnabled?: boolean;
+  shadowMapSize?: number;
+  shadowRadius?: number;
+  shadowGround?: boolean;
+  shadowOpacity?: number;
+  ambientIntensity?: number;
+  ambientColor?: string;
+  envIntensity?: number;
+  dirCount?: number;
+  dir1Color?: string; dir1Intensity?: number; dir1Pos?: { x: number; y: number; z: number };
+  dir2Color?: string; dir2Intensity?: number; dir2Pos?: { x: number; y: number; z: number };
+  spotCount?: number;
+  spot1Color?: string; spot1Intensity?: number; spot1Pos?: { x: number; y: number; z: number };
+  spot2Color?: string; spot2Intensity?: number; spot2Pos?: { x: number; y: number; z: number };
+  spot3Color?: string; spot3Intensity?: number; spot3Pos?: { x: number; y: number; z: number };
+  spot4Color?: string; spot4Intensity?: number; spot4Pos?: { x: number; y: number; z: number };
+  pointCount?: number;
+  point1Color?: string; point1Intensity?: number; point1Pos?: { x: number; y: number; z: number };
+  point2Color?: string; point2Intensity?: number; point2Pos?: { x: number; y: number; z: number };
+  point3Color?: string; point3Intensity?: number; point3Pos?: { x: number; y: number; z: number };
+  point4Color?: string; point4Intensity?: number; point4Pos?: { x: number; y: number; z: number };
+  rectCount?: number;
+  rectBothSides?: boolean;
+  rect1Color?: string; rect1Intensity?: number; rect1Width?: number; rect1Height?: number; rect1X?: number; rect1Y?: number; rect1Z?: number;
+  rect2Color?: string; rect2Intensity?: number; rect2Width?: number; rect2Height?: number; rect2X?: number; rect2Y?: number; rect2Z?: number;
+  rect3Color?: string; rect3Intensity?: number; rect3Width?: number; rect3Height?: number; rect3X?: number; rect3Y?: number; rect3Z?: number;
+  rect4Color?: string; rect4Intensity?: number; rect4Width?: number; rect4Height?: number; rect4X?: number; rect4Y?: number; rect4Z?: number;
 }
 
 export const DEFAULT_MATERIAL: BagMaterial = {

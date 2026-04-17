@@ -19,6 +19,12 @@ import {
   resolveEnvironmentPreset,
   type BagMaterial,
 } from "@/lib/bagMaterial";
+import {
+  CustomLightRig,
+  hasCustomRig,
+  resolveToneMapping,
+  resolveWrapperBackground,
+} from "./CustomLightRig";
 import type { SceneEnvironment } from "@/lib/types";
 
 interface Props {
@@ -191,31 +197,53 @@ export default function OutreachJarViewer({
       }
       // The saved label image lives on Layer 2 of the jar; Layer 3 is the
       // optional second stacked artwork. Both default to clear if absent
-      // so the bare label finish shows through. Material/Varnish state
-      // isn't currently persisted per-layer, so both default to off here.
+      // so the bare label finish shows through.
       layer2TextureUrl={textureUrl}
-      layer2Metalness={0}
-      layer2Roughness={0.5}
+      layer2Metalness={mat.layer2Metalness ?? 0}
+      layer2Roughness={mat.layer2Roughness ?? 0.5}
+      layer2Varnish={mat.layer2Varnish ?? false}
+      layer2Material={mat.layer2Material ?? false}
+      layer2MatFinish={mat.layer2MatFinish}
+      layer2MatMetalness={mat.layer2MatMetalness}
+      layer2MatRoughness={mat.layer2MatRoughness}
       layer3TextureUrl={backTextureUrl}
-      layer3Metalness={0}
-      layer3Roughness={0.5}
+      layer3Metalness={mat.layer3Metalness ?? 0}
+      layer3Roughness={mat.layer3Roughness ?? 0.5}
+      layer3Varnish={mat.layer3Varnish ?? false}
+      layer3Material={mat.layer3Material ?? false}
+      layer3MatFinish={mat.layer3MatFinish}
+      layer3MatMetalness={mat.layer3MatMetalness}
+      layer3MatRoughness={mat.layer3MatRoughness}
       envIntensityScale={dimScale}
       floating={env !== "smoke"}
     />
   );
 
-  return (
+  // Play back the user's full rig when the slot was saved with one.
+  const customRig = hasCustomRig(mat);
+  const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
+  const canvasBg =
+    transparent || bgMode !== "flat"
+      ? null
+      : customRig
+        ? mat.backgroundColor1 ?? "#eef1f8"
+        : "#eef1f8";
+  const gradientBg =
+    customRig && bgMode === "gradient" && !transparent
+      ? resolveWrapperBackground(mat)
+      : null;
+
+  const canvas = (
     <Canvas
       camera={{ position: [0, -0.3, 4.5], fov: 42 }}
-      // Leave the gl context at drei's defaults (alpha: true) so ContactShadows
-      // and other transparent-material primitives composite the way they always
-      // have. Transparency for the landing page is achieved purely by *omitting*
-      // the scene-background <color> below — the canvas is already alpha-capable
-      // by default, so the page bg simply shows through.
       gl={{
         antialias: true,
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.4,
+        toneMapping: customRig
+          ? resolveToneMapping(mat.toneMappingCurve)
+          : THREE.ACESFilmicToneMapping,
+        toneMappingExposure: customRig
+          ? mat.toneMappingExposure ?? 1.4
+          : 1.4,
       }}
       shadows
       dpr={[1, 2]}
@@ -225,20 +253,43 @@ export default function OutreachJarViewer({
         pointerEvents: interactive ? "auto" : "none",
       }}
     >
-      {!transparent && <color attach="background" args={["#eef1f8"]} />}
-      {!isRave && <ambientLight intensity={0.45 * dimScale} />}
+      {canvasBg && <color attach="background" args={[canvasBg]} />}
+      {customRig && mat.fogEnabled && (
+        <fog
+          attach="fog"
+          args={[mat.fogColor ?? "#cccccc", mat.fogNear ?? 2, mat.fogFar ?? 10]}
+        />
+      )}
+      {customRig ? (
+        <ambientLight
+          intensity={(mat.ambientIntensity ?? 0.45) * dimScale}
+          color={mat.ambientColor ?? "#ffffff"}
+        />
+      ) : (
+        !isRave && <ambientLight intensity={0.45 * dimScale} />
+      )}
 
       <Suspense fallback={null}>
+        {/* HDRI environment — see OutreachBagViewer for rationale. */}
         {isRave ? (
-          <>
-            <RaveLights />
-            {/* Keep the HDRI contribution low so the rainbow point lights
-                dominate reflections — same tuning as the Preview viewer. */}
-            <Environment preset="studio" background={false} environmentIntensity={0.22} />
-          </>
+          <Environment
+            preset="studio"
+            background={false}
+            environmentIntensity={
+              customRig ? (mat.envIntensity ?? 1) * dimScale : 0.22
+            }
+          />
         ) : (
-          <Environment preset={envPreset} environmentIntensity={dimScale} />
+          <Environment
+            preset={envPreset}
+            environmentIntensity={
+              customRig ? (mat.envIntensity ?? 1) * dimScale : dimScale
+            }
+          />
         )}
+
+        {isRave && <RaveLights />}
+        {isDim && <RainbowLights />}
 
         {isSmoke && (
           <>
@@ -247,10 +298,13 @@ export default function OutreachJarViewer({
           </>
         )}
 
-        {isDim && (
-          <>
-            <RainbowLights />
-          </>
+        {customRig && (
+          <CustomLightRig
+            mat={mat}
+            shadowsEnabled={mat.shadowsEnabled ?? false}
+            shadowMapSize={(mat.shadowMapSize ?? 1024) as number}
+            shadowRadius={(mat.shadowRadius ?? 4) as number}
+          />
         )}
 
         {autoRotate && !interactive ? (
@@ -264,7 +318,7 @@ export default function OutreachJarViewer({
         ) : (
           <ContactShadows
             position={[0, -1.28, 0]}
-            opacity={0.5}
+            opacity={customRig ? mat.shadowOpacity ?? 0.5 : 0.5}
             scale={5}
             blur={2.5}
             far={2}
@@ -287,4 +341,19 @@ export default function OutreachJarViewer({
       )}
     </Canvas>
   );
+
+  if (gradientBg) {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: gradientBg,
+        }}
+      >
+        {canvas}
+      </div>
+    );
+  }
+  return canvas;
 }

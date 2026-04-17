@@ -21,6 +21,12 @@ import {
   resolveEnvironmentPreset,
   type BagMaterial,
 } from "@/lib/bagMaterial";
+import {
+  CustomLightRig,
+  hasCustomRig,
+  resolveToneMapping,
+  resolveWrapperBackground,
+} from "./CustomLightRig";
 import type { SceneEnvironment } from "@/lib/types";
 
 interface Props {
@@ -28,6 +34,10 @@ interface Props {
   textureUrl: string | null;
   /** Back-panel artwork. Null → default Calyx bag back. */
   backTextureUrl?: string | null;
+  /** Bag Layer 3 front stacked decal. Null → skip layer. */
+  layer3FrontTextureUrl?: string | null;
+  /** Bag Layer 3 back stacked decal. Null → skip layer. */
+  layer3BackTextureUrl?: string | null;
   /** Captured material config from BagViewer; null → DEFAULT_MATERIAL. */
   material?: BagMaterial | null;
   /** When false, OrbitControls are dropped and canvas ignores pointer events
@@ -155,6 +165,8 @@ function SpinningGroup({
 export default function OutreachBagViewer({
   textureUrl,
   backTextureUrl = null,
+  layer3FrontTextureUrl = null,
+  layer3BackTextureUrl = null,
   material,
   interactive = true,
   autoRotate = false,
@@ -181,6 +193,8 @@ export default function OutreachBagViewer({
     <BagMesh
       textureUrl={resolvedFront}
       backTextureUrl={resolvedBack}
+      layer3FrontTextureUrl={layer3FrontTextureUrl}
+      layer3BackTextureUrl={layer3BackTextureUrl}
       metalness={surface.metalness}
       roughness={surface.roughness}
       color={mat.bagColor}
@@ -194,6 +208,15 @@ export default function OutreachBagViewer({
       labelMatFinish={mat.labelMatFinish}
       labelMatMetalness={mat.labelMatMetalness}
       labelMatRoughness={mat.labelMatRoughness}
+      // Layer 3 material settings — undefined-safe; BagMesh falls back to its
+      // own defaults for saves from before Layer 3 was persisted.
+      layer3Metalness={mat.layer3Metalness}
+      layer3Roughness={mat.layer3Roughness}
+      layer3Varnish={mat.layer3Varnish ?? false}
+      layer3Material={mat.layer3Material ?? false}
+      layer3MatFinish={mat.layer3MatFinish}
+      layer3MatMetalness={mat.layer3MatMetalness}
+      layer3MatRoughness={mat.layer3MatRoughness}
       iridescence={iridescenceCfg?.iridescence ?? 0}
       iridescenceIOR={iridescenceCfg?.iridescenceIOR ?? 1.5}
       iridescenceThicknessRange={
@@ -205,48 +228,96 @@ export default function OutreachBagViewer({
     />
   );
 
-  return (
+  // If the slot was saved with the full lighting rig (post-2026-04-16),
+  // play back the user's actual setup; otherwise fall back to the legacy
+  // preset-based lighting so older slots keep rendering the way they
+  // always did. The sentinel is `mat.rectCount !== undefined` — present
+  // iff BagViewer's full-rig emit touched the material.
+  const customRig = hasCustomRig(mat);
+  const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
+  const canvasBg =
+    transparent || bgMode !== "flat"
+      ? null
+      : customRig
+        ? mat.backgroundColor1 ?? "#eef1f8"
+        : "#eef1f8";
+  const gradientBg =
+    customRig && bgMode === "gradient" && !transparent
+      ? resolveWrapperBackground(mat)
+      : null;
+
+  const canvas = (
     <Canvas
       camera={{ position: [0, -0.3, 4.5], fov: 42 }}
-      // Leave the gl context at drei's defaults (alpha: true) so ContactShadows
-      // and other transparent-material primitives composite the way they always
-      // have. Transparency for the landing page is achieved purely by *omitting*
-      // the scene-background <color> below — the canvas is already alpha-capable
-      // by default, so the page bg simply shows through.
       gl={{
         antialias: true,
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: isRave ? 1.1 : 1.4,
+        toneMapping: customRig
+          ? resolveToneMapping(mat.toneMappingCurve)
+          : THREE.ACESFilmicToneMapping,
+        toneMappingExposure: customRig
+          ? mat.toneMappingExposure ?? 1.4
+          : isRave
+            ? 1.1
+            : 1.4,
       }}
       shadows
       dpr={[1, 2]}
       style={{
         width: "100%",
         height: "100%",
-        // Let clicks pass through to the parent (e.g. landing Link card)
         pointerEvents: interactive ? "auto" : "none",
       }}
     >
-      {!transparent && <color attach="background" args={["#eef1f8"]} />}
-      {!isRave && <ambientLight intensity={0.45 * dimScale} />}
+      {canvasBg && <color attach="background" args={[canvasBg]} />}
+      {customRig && mat.fogEnabled && (
+        <fog
+          attach="fog"
+          args={[mat.fogColor ?? "#cccccc", mat.fogNear ?? 2, mat.fogFar ?? 10]}
+        />
+      )}
+      {customRig ? (
+        <ambientLight
+          intensity={(mat.ambientIntensity ?? 0.45) * dimScale}
+          color={mat.ambientColor ?? "#ffffff"}
+        />
+      ) : (
+        !isRave && <ambientLight intensity={0.45 * dimScale} />
+      )}
 
       <Suspense fallback={null}>
+        {/* HDRI environment — rave preset still forces studio + low
+            intensity because "rave" isn't a valid drei preset. For
+            every other case we honour the saved material's preset +
+            intensity when the slot carries a custom rig, or fall back
+            to the legacy 1.0 intensity for older saves. */}
         {isRave ? (
-          <>
-            <RaveLights />
-            <Environment preset="studio" background={false} environmentIntensity={0.22} />
-          </>
+          <Environment
+            preset="studio"
+            background={false}
+            environmentIntensity={
+              customRig ? (mat.envIntensity ?? 1) * dimScale : 0.22
+            }
+          />
         ) : (
-          // Route lighting through resolveEnvironmentPreset so an unknown or
-          // BagViewer-specific value (e.g. "rave" slips past the isRave guard
-          // via a stale save) falls back to "studio" instead of crashing
-          // drei with "Preset must be one of: …".
           <Environment
             preset={resolveEnvironmentPreset(mat.lighting)}
-            environmentIntensity={dimScale}
+            environmentIntensity={
+              customRig ? (mat.envIntensity ?? 1) * dimScale : dimScale
+            }
           />
         )}
 
+        {/* Preset-driven extra lights — rave/dim add their colour
+            characters even when a custom rig is also saved, because
+            they're tied to the `lighting` HDRI preset the user picked,
+            not to the additive rig. Smoke env visuals live below. */}
+        {isRave && <RaveLights />}
+        {isDim && <RainbowLights />}
+
+        {/* Smoke-environment scene elements — always render when the
+            slot was saved with environment="smoke", independent of
+            whether a custom rig exists. These (clouds + low-key lights)
+            are part of the env, not the material's lighting rig. */}
         {isSmoke && (
           <>
             <SmokeLights />
@@ -254,10 +325,15 @@ export default function OutreachBagViewer({
           </>
         )}
 
-        {isDim && (
-          <>
-            <RainbowLights />
-          </>
+        {/* User's custom rig — stacks on top of preset + env lights so
+            spotlights / directional / point / rect adds are additive. */}
+        {customRig && (
+          <CustomLightRig
+            mat={mat}
+            shadowsEnabled={mat.shadowsEnabled ?? false}
+            shadowMapSize={(mat.shadowMapSize ?? 1024) as number}
+            shadowRadius={(mat.shadowRadius ?? 4) as number}
+          />
         )}
 
         {autoRotate && !interactive ? (
@@ -271,7 +347,7 @@ export default function OutreachBagViewer({
         ) : (
           <ContactShadows
             position={[0, -1.28, 0]}
-            opacity={isRave ? 0.8 : 0.5}
+            opacity={customRig ? mat.shadowOpacity ?? 0.5 : isRave ? 0.8 : 0.5}
             scale={5}
             blur={2.5}
             far={2}
@@ -294,4 +370,22 @@ export default function OutreachBagViewer({
       )}
     </Canvas>
   );
+
+  // Wrapper only when we need a gradient background painted under an
+  // otherwise-alpha Canvas. Flat backgrounds go through scene <color>
+  // (no wrapper); transparent skips both so the page bg shows through.
+  if (gradientBg) {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: gradientBg,
+        }}
+      >
+        {canvas}
+      </div>
+    );
+  }
+  return canvas;
 }

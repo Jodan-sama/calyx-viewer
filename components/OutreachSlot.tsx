@@ -37,12 +37,18 @@ export function ProductSlot({
   index,
   set,
   onOpenImage,
+  onExpand,
   isAdmin = false,
   onTitleChange,
 }: {
   index: number;
   set?: ProductSet;
   onOpenImage: (src: string, alt: string) => void;
+  /** Called when the user clicks the expand affordance on a 3D slot.
+   *  Only rendered when provided AND the slot is a 3D bag/jar AND
+   *  `isAdmin` is off — the expand handler lives on the client site
+   *  so admins don't trip over it when they meant to Edit. */
+  onExpand?: (set: ProductSet) => void;
   /** Outreach-only — turns on the inline title editor + "Open in Preview"
    *  action button. Absent on the client site so the slot reads as a
    *  read-only showcase. */
@@ -53,8 +59,19 @@ export function ProductSlot({
 }) {
   if (set) {
     const isFlat = set.kind === "flat-image";
+    // When the slot was saved with Background → Transparent in the
+    // studio, skip the slot-card's flat blue fill so the page
+    // underneath (e.g. the client site's wavy lines) reads through
+    // the alpha Canvas. Border + rounded corners stay so the card
+    // still frames the 3D asset.
+    const bgIsTransparent =
+      !isFlat && set.material?.backgroundMode === "transparent";
     return (
-      <div className="relative aspect-square rounded-[20px] overflow-hidden border border-[#272724]/10 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_28px_-10px_rgba(0,0,0,0.1)] bg-[#eef1f8] group">
+      <div
+        className={`relative aspect-square rounded-[20px] overflow-hidden border border-[#272724]/10 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_28px_-10px_rgba(0,0,0,0.1)] group ${
+          bgIsTransparent ? "" : "bg-[#eef1f8]"
+        }`}
+      >
         {isFlat ? (
           <button
             type="button"
@@ -73,15 +90,21 @@ export function ProductSlot({
         ) : set.product_type === "supplement-jar" ? (
           <OutreachJarViewer
             textureUrl={set.label_image_url}
+            backTextureUrl={set.material?.backImageUrl ?? null}
             material={set.material}
             environment={set.environment}
+            transparent={bgIsTransparent}
             autoRotate
           />
         ) : (
           <OutreachBagViewer
             textureUrl={set.label_image_url}
+            backTextureUrl={set.material?.backImageUrl ?? null}
+            layer3FrontTextureUrl={set.material?.layer3FrontImageUrl ?? null}
+            layer3BackTextureUrl={set.material?.layer3BackImageUrl ?? null}
             material={set.material}
             environment={set.environment}
+            transparent={bgIsTransparent}
             autoRotate
           />
         )}
@@ -89,6 +112,31 @@ export function ProductSlot({
           <span className="absolute top-3 left-3 text-[9px] font-semibold tracking-[0.18em] uppercase px-2 py-1 rounded-full bg-white/85 text-purple-700 pointer-events-none">
             ✦ Magic
           </span>
+        )}
+
+        {/* Client-site only: expand to full-screen preview. Mirrors
+            the admin "Edit" affordance's positioning + hover reveal
+            but opens a fullscreen modal with a download button
+            rather than navigating to the studio. */}
+        {!isAdmin && !isFlat && onExpand && (
+          <button
+            type="button"
+            onClick={() => onExpand(set)}
+            title="Expand to full-screen preview"
+            aria-label="Expand preview"
+            className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/90 backdrop-blur-sm text-[#272724] text-[10px] font-semibold tracking-[0.14em] uppercase shadow-sm hover:bg-white"
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
+              <path
+                d="M1 5V1h4M7 1h4v4M11 7v4H7M5 11H1V7"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Expand
+          </button>
         )}
 
         {/* Admin-only: "Open in Preview" launcher. Only makes sense for 3D

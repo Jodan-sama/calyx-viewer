@@ -24,6 +24,16 @@ export type SaveSource =
   | {
       kind: "bag-3d";
       file: File;
+      /** Layer 2 back (bag) or Layer 3 (jar). Uploaded alongside the
+       *  primary front image; resulting URL lands in
+       *  `material.backImageUrl`. */
+      backFile?: File | null;
+      /** Bag Layer 3 front — ignored for jar saves. Resulting URL lands
+       *  in `material.layer3FrontImageUrl`. */
+      layer3FrontFile?: File | null;
+      /** Bag Layer 3 back — ignored for jar saves. Resulting URL lands
+       *  in `material.layer3BackImageUrl`. */
+      layer3BackFile?: File | null;
       material: BagMaterial;
       productType?: ProductSet["product_type"];
       environment?: SceneEnvironment;
@@ -189,6 +199,37 @@ export default function SaveToOutreachDialog({
 
         const label_image_url = await uploadLabel(blob, brand.slug, filename);
 
+        // Upload every secondary artwork the user configured so material
+        // round-trips through the slot without losing textures. Each
+        // upload is gated on a non-null File — the page only sets these
+        // when the user actually uploads that layer. URLs land back on
+        // a cloned material object so we don't mutate the page's ref.
+        let persistedMaterial: BagMaterial | null = null;
+        if (source.kind === "bag-3d") {
+          persistedMaterial = { ...source.material };
+          if (source.backFile) {
+            persistedMaterial.backImageUrl = await uploadLabel(
+              source.backFile,
+              brand.slug,
+              source.backFile.name
+            );
+          }
+          if (source.layer3FrontFile) {
+            persistedMaterial.layer3FrontImageUrl = await uploadLabel(
+              source.layer3FrontFile,
+              brand.slug,
+              source.layer3FrontFile.name
+            );
+          }
+          if (source.layer3BackFile) {
+            persistedMaterial.layer3BackImageUrl = await uploadLabel(
+              source.layer3BackFile,
+              brand.slug,
+              source.layer3BackFile.name
+            );
+          }
+        }
+
         // Upload a downscaled 3D render preview when one was provided.
         // For flat-image sources there's nothing to downscale (the blob
         // IS the final image), and for 3D sources where the viewer
@@ -222,7 +263,7 @@ export default function SaveToOutreachDialog({
           title: title.trim(),
           product_type: productType,
           label_image_url,
-          material: source.kind === "bag-3d" ? source.material : null,
+          material: persistedMaterial,
           environment: source.kind === "bag-3d" ? source.environment ?? "default" : "default",
           preview_image_url,
         });
