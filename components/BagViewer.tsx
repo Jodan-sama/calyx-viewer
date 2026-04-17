@@ -17,7 +17,6 @@ import { useControls, folder, button, useCreateStore } from "leva";
 // hook hands back to the page for each sidebar's store.
 type LevaStore = ReturnType<typeof useCreateStore>;
 import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
-import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
 import SupplementJarMesh from "./SupplementJarMesh";
@@ -1020,6 +1019,19 @@ export default function BagViewer({
     }, { collapsed: true }),
 
     "Rect Area Lights": folder({
+      // Rect lights emit in a single direction (toward their target —
+      // here, world origin). A light positioned in front of the bag
+      // therefore illuminates only the front-facing artwork; the
+      // back stays dark, which is physically correct but breaks the
+      // "I want a product-photo preview where both sides read" UX.
+      // When this toggle is on, every active rect light gets a mirror
+      // twin at `z = -z` that also aims at origin — net effect: the
+      // back panel's artwork picks up the same light(s) the front
+      // does, no need to add matching rect lights by hand on both
+      // sides. Turn off for physically-accurate single-side lighting.
+      rectBothSides: {
+        label: "Wrap Both Sides", value: true,
+      },
       rectCount: { label: "Count", value: 0, min: 0, max: 4, step: 1 },
       // Rect 1
       rect1Color: {
@@ -1203,7 +1215,7 @@ export default function BagViewer({
     point3Color, point3Intensity, point3Pos,
     point4Color, point4Intensity, point4Pos,
     // Rect area lights
-    rectCount,
+    rectCount, rectBothSides,
     rect1Color, rect1Intensity, rect1Width, rect1Height, rect1X, rect1Y, rect1Z,
     rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
     rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
@@ -1426,7 +1438,7 @@ export default function BagViewer({
           </>
         ) : hdriIsCustom ? (
           <Environment
-            files="/hdri/studio_kominka_01_4k.exr"
+            files="/hdri/studio_kominka_01_1k.hdr"
             environmentIntensity={dimScale * envIntensity}
           />
         ) : (
@@ -1627,6 +1639,52 @@ export default function BagViewer({
         {rectCount >= 4 && (
           <AimedRectAreaLight
             position={[rect4X, rect4Y, rect4Z]}
+            color={rect4Color}
+            intensity={rect4Intensity}
+            width={rect4Width}
+            height={rect4Height}
+          />
+        )}
+
+        {/* Mirrored twins — one per active rect light, positioned at
+            the opposite Z so the back panel's artwork receives the
+            same illumination as the front. Each still looks at origin
+            (via AimedRectAreaLight's lookAt), so the emitter points
+            at the bag from behind. Intensity is matched, not halved,
+            since rect lights only hit surfaces whose normals face
+            them; the front rect lights only light the front normals
+            and the back rect lights only light the back normals, so
+            there's no double-counting on either panel. */}
+        {rectBothSides && rectCount >= 1 && (
+          <AimedRectAreaLight
+            position={[rect1X, rect1Y, -rect1Z]}
+            color={rect1Color}
+            intensity={rect1Intensity}
+            width={rect1Width}
+            height={rect1Height}
+          />
+        )}
+        {rectBothSides && rectCount >= 2 && (
+          <AimedRectAreaLight
+            position={[rect2X, rect2Y, -rect2Z]}
+            color={rect2Color}
+            intensity={rect2Intensity}
+            width={rect2Width}
+            height={rect2Height}
+          />
+        )}
+        {rectBothSides && rectCount >= 3 && (
+          <AimedRectAreaLight
+            position={[rect3X, rect3Y, -rect3Z]}
+            color={rect3Color}
+            intensity={rect3Intensity}
+            width={rect3Width}
+            height={rect3Height}
+          />
+        )}
+        {rectBothSides && rectCount >= 4 && (
+          <AimedRectAreaLight
+            position={[rect4X, rect4Y, -rect4Z]}
             color={rect4Color}
             intensity={rect4Intensity}
             width={rect4Width}
