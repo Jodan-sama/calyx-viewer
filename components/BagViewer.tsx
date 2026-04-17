@@ -531,6 +531,13 @@ export default function BagViewer({
           "Prismatic Foil": "prismatic",
           "Multi-Chrome": "multi-chrome",
           Custom: "custom",
+          // Diagnostic mode — renders every bag fragment coloured by
+          // its world-space normal vector so you can tell by eye
+          // whether a panel's normals point where they should. Pure
+          // blue ≈ +Z out-of-front, pure yellow ≈ -Z out-of-back.
+          // Mixed / swapped colours on a panel explain why direct
+          // lights land unevenly.
+          "Debug Normals": "debug-normals",
         },
       },
       metalness: {

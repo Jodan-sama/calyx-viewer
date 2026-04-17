@@ -558,7 +558,27 @@ export default function BagMesh({
   const backLabelTex = backTex;
 
   // ── Bag scene + materials ──────────────────────────────────────────────────
-  const bagScene = useMemo(() => scene.clone(true), [scene]);
+  const bagScene = useMemo(() => {
+    const clone = scene.clone(true);
+    // The mylar-bag GLB ships with vertex normals baked pointing the
+    // *wrong* way — Debug Normals mode revealed the base rendering in
+    // olive/yellow (nz≈−1) on panels that clearly face +Z. That's
+    // why spotlights produced inverted behaviour between the base
+    // (inverted stored normals) and the label (re-computed, correct
+    // normals). We overwrite every mesh's normals with a fresh
+    // computeVertexNormals() so the base agrees with the winding —
+    // matching the rest of the pipeline (label, foil, prismatic,
+    // chrome shaders all derive from or assume winding-correct
+    // normals). `DoubleSide` doesn't rescue us here: three.js only
+    // auto-flips normals for screen-space back-facing triangles, so
+    // incorrect STORED normals on front-facing triangles stay wrong.
+    clone.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (!m.isMesh || !m.geometry) return;
+      m.geometry.computeVertexNormals();
+    });
+    return clone;
+  }, [scene]);
 
   const mylarMat = useMemo(() => new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(color), metalness, roughness,
@@ -566,6 +586,19 @@ export default function BagMesh({
     iridescence, iridescenceIOR, iridescenceThicknessRange,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
+
+  // Debug material — colours every fragment by its world-space normal
+  // direction (r = nx*0.5+0.5, g = ny*0.5+0.5, b = nz*0.5+0.5). When
+  // Surface → Finish is set to "Debug Normals" we swap this in for the
+  // whole bag so we can tell by eye whether each panel's normals are
+  // pointing where they should be: pure blue (#0000ff-ish) means the
+  // normal is pointing +Z (toward camera / out of front), pure yellow
+  // (#ffff00-ish) means it's pointing -Z (out of back). Mixed / wrong
+  // colours on a given panel indicate inverted or scrambled normals.
+  const debugNormalMat = useMemo(
+    () => new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }),
+    []
+  );
 
   useEffect(() => {
     mylarMat.color.set(color);
@@ -602,7 +635,8 @@ export default function BagMesh({
     bagScene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh) return;
-      if (finish === "foil")           m.material = holographicFoilMat;
+      if (finish === "debug-normals")  m.material = debugNormalMat;
+      else if (finish === "foil")      m.material = holographicFoilMat;
       else if (finish === "prismatic") m.material = prismaticFoilMat;
       else if (iridescence > 0)        m.material = multiChromeMat;
       else                             m.material = mylarMat;
@@ -610,7 +644,7 @@ export default function BagMesh({
       m.receiveShadow = true;
       m.renderOrder = 0;
     });
-  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, iridescence, finish]);
+  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, debugNormalMat, iridescence, finish]);
 
   // Mark label geo dirty when bag scene changes
   useEffect(() => { decalDirty.current = true; }, [bagScene]);
