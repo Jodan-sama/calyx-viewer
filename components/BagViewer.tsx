@@ -11,7 +11,13 @@ import {
   Clouds,
   MeshReflectorMaterial,
 } from "@react-three/drei";
-import { useControls, folder, button } from "leva";
+import { useControls, folder, button, useCreateStore } from "leva";
+// Leva doesn't re-export its internal StoreType, so we reconstruct
+// it from the return type of `useCreateStore` — the same shape the
+// hook hands back to the page for each sidebar's store.
+type LevaStore = ReturnType<typeof useCreateStore>;
+import { RectAreaLightUniformsLib } from "three/examples/jsm/lights/RectAreaLightUniformsLib.js";
+import { EXRLoader } from "three/examples/jsm/loaders/EXRLoader.js";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
 import SupplementJarMesh from "./SupplementJarMesh";
@@ -19,6 +25,7 @@ import {
   DEFAULT_BACK_TEXTURE,
   DEFAULT_FRONT_TEXTURE,
   FINISH_PRESETS,
+  resolveEnvironmentPreset,
   type BagFinish,
   type BagLighting,
   type BagMaterial,
@@ -31,6 +38,54 @@ import {
   type SavedLighting,
 } from "@/lib/lightingPrefs";
 import type { SceneEnvironment } from "@/lib/types";
+
+// ── Auto-aimed rect area light ──────────────────────────────────────────────
+// A <rectAreaLight> that aims itself at the world origin (where the bag
+// sits) every frame. RectAreaLight by default emits along its local +Y
+// axis; without aiming it would point "up" and miss the bag entirely.
+// We aim once on mount + again whenever the position prop changes so
+// dragging the light around the top-down map updates the aim too.
+function AimedRectAreaLight({
+  position,
+  color,
+  intensity,
+  width,
+  height,
+}: {
+  position: [number, number, number];
+  color: string;
+  intensity: number;
+  width: number;
+  height: number;
+}) {
+  const lightRef = useRef<THREE.RectAreaLight>(null);
+  useEffect(() => {
+    if (lightRef.current) {
+      lightRef.current.lookAt(0, 0, 0);
+    }
+  }, [position]);
+  return (
+    <rectAreaLight
+      ref={lightRef}
+      position={position}
+      color={color}
+      intensity={intensity}
+      width={width}
+      height={height}
+    />
+  );
+}
+
+// Map Leva's curve string to the actual three.js tone mapping constant.
+// Kept outside the component so it isn't re-created on every render.
+const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
+  aces: THREE.ACESFilmicToneMapping,
+  agx: THREE.AgXToneMapping,
+  cineon: THREE.CineonToneMapping,
+  reinhard: THREE.ReinhardToneMapping,
+  linear: THREE.LinearToneMapping,
+  none: THREE.NoToneMapping,
+};
 
 // ── Lighting reset icon portal ──────────────────────────────────────────────
 // Renders a small circular "↻" button into the Lighting folder's title row
@@ -378,6 +433,14 @@ interface BagViewerProps {
   initialMaterial?: BagMaterial;
   initialEnvironment?: "default" | "smoke" | "dim";
   initialModel?: "bag" | "jar";
+  /** Leva stores created by the parent page — one per docked sidebar.
+   *  Material + layer controls route to `matStore`; every scene /
+   *  environment / lighting knob routes to `lightStore` so each
+   *  sidebar can be collapsed independently. When omitted (e.g. the
+   *  landing-page preview card) Leva falls back to its global store
+   *  and the existing single-panel behaviour is preserved. */
+  matStore?: LevaStore;
+  lightStore?: LevaStore;
 }
 
 export default function BagViewer({
@@ -393,7 +456,14 @@ export default function BagViewer({
   initialMaterial,
   initialEnvironment,
   initialModel,
+  matStore,
+  lightStore,
 }: BagViewerProps) {
+  // RectAreaLight support needs a one-time uniforms-library init. Safe to
+  // call repeatedly; three.js guards against double-init internally.
+  useEffect(() => {
+    RectAreaLightUniformsLib.init();
+  }, []);
   // Resolved initial values for the Leva schema below. Consulted once at
   // mount — if the page supplies an initialMaterial (e.g. opened from an
   // Outreach slot), these prefill the controls; otherwise the hard-coded
@@ -654,106 +724,24 @@ export default function BagViewer({
     }, { collapsed: false }),
 
     Scene: folder({
+      // Auto Rotate stays in the Materials sidebar since it's a
+      // camera/view concern rather than a lighting one. The HDRI
+      // preset + intensity moved to the Lighting sidebar.
       autoRotate: { label: "Auto Rotate", value: false },
-      lighting: {
-        label: "Lighting", value: iMat?.lighting ?? "studio",
-        options: { Studio: "studio", Warehouse: "warehouse", City: "city", Forest: "forest", Sunset: "sunset", Rave: "rave" },
-      },
     }, { collapsed: false }),
+    // NOTE: when useControls is given a factory, the hook settings
+    // (including `store`) go in the SECOND arg and deps in the
+    // third — swap the order and Leva silently falls back to the
+    // global store because `parseArgs` only parses settings-in-slot-2.
+  }), { store: matStore }, []);
 
-    // ── Custom lighting ────────────────────────────────────────────────
-    // A tuning layer on top of the HDRI preset above. Ambient intensity
-    // overrides the hard-coded 0.45 fill; env intensity multiplies the
-    // HDRI contribution (0 = disable HDRI entirely). Below that, up to 4
-    // user-configured spotlights can be added — each with its own color,
-    // intensity, and XYZ position. Spotlights are additive, so they
-    // stack on top of whatever the HDRI + environment scene already
-    // contributes (Smoke's backlights, Dim's rainbow ring, etc.).
-    Lighting: folder({
-      // Initial values come from iLighting (= stored rig for iEnv, or
-      // LIGHTING_DEFAULTS). On env change, setLeva(...) swaps in the
-      // new env's stored rig. The RESET icon (portal-injected into
-      // the folder title) clears storage for the current env and
-      // snaps values back to LIGHTING_DEFAULTS.
-      ambientIntensity: {
-        label: "Ambient", value: iLighting.ambientIntensity, min: 0, max: 3, step: 0.01,
-      },
-      envIntensity: {
-        label: "HDRI Intensity", value: iLighting.envIntensity, min: 0, max: 3, step: 0.01,
-      },
-      spotCount: {
-        label: "Spotlights", value: iLighting.spotCount, min: 0, max: 4, step: 1,
-      },
-      // Spotlight 1
-      spot1Color: {
-        label: "S1 Color", value: iLighting.spot1Color,
-        render: (get) => get("Lighting.spotCount") >= 1,
-      },
-      spot1Intensity: {
-        label: "S1 Intensity", value: iLighting.spot1Intensity, min: 0, max: 200, step: 1,
-        render: (get) => get("Lighting.spotCount") >= 1,
-      },
-      spot1Pos: {
-        label: "S1 Position", value: iLighting.spot1Pos,
-        step: 0.1,
-        render: (get) => get("Lighting.spotCount") >= 1,
-      },
-      // Spotlight 2
-      spot2Color: {
-        label: "S2 Color", value: iLighting.spot2Color,
-        render: (get) => get("Lighting.spotCount") >= 2,
-      },
-      spot2Intensity: {
-        label: "S2 Intensity", value: iLighting.spot2Intensity, min: 0, max: 200, step: 1,
-        render: (get) => get("Lighting.spotCount") >= 2,
-      },
-      spot2Pos: {
-        label: "S2 Position", value: iLighting.spot2Pos,
-        step: 0.1,
-        render: (get) => get("Lighting.spotCount") >= 2,
-      },
-      // Spotlight 3
-      spot3Color: {
-        label: "S3 Color", value: iLighting.spot3Color,
-        render: (get) => get("Lighting.spotCount") >= 3,
-      },
-      spot3Intensity: {
-        label: "S3 Intensity", value: iLighting.spot3Intensity, min: 0, max: 200, step: 1,
-        render: (get) => get("Lighting.spotCount") >= 3,
-      },
-      spot3Pos: {
-        label: "S3 Position", value: iLighting.spot3Pos,
-        step: 0.1,
-        render: (get) => get("Lighting.spotCount") >= 3,
-      },
-      // Spotlight 4
-      spot4Color: {
-        label: "S4 Color", value: iLighting.spot4Color,
-        render: (get) => get("Lighting.spotCount") >= 4,
-      },
-      spot4Intensity: {
-        label: "S4 Intensity", value: iLighting.spot4Intensity, min: 0, max: 200, step: 1,
-        render: (get) => get("Lighting.spotCount") >= 4,
-      },
-      spot4Pos: {
-        label: "S4 Position", value: iLighting.spot4Pos,
-        step: 0.1,
-        render: (get) => get("Lighting.spotCount") >= 4,
-      },
-      // SAVE button pinned to the bottom of the folder. Writes the
-      // current Leva values into localStorage under the *active*
-      // environment's key — so each of default / smoke / dim carries
-      // its own persisted rig. Handlers are routed through a ref so
-      // the button closes over the latest `environment` + `values`
-      // rather than the stale ones captured at schema-build time.
-      //
-      // Leva renders buttons using their schema key as the label, so
-      // the verbose key here is intentional — it's what users see.
-      "Save Lighting for Environment": button(() =>
-        lightingOpsRef.current.save()
-      ),
-    }, { collapsed: false }),
-
+  // ── Lighting store ─────────────────────────────────────────────────────────
+  // Second useControls call, bound to the Lighting sidebar's Leva store. All
+  // scene/environment/lighting knobs live here so the Lighting sidebar can
+  // be collapsed independently of the Materials one. New controls added on
+  // top of the existing set: tone mapping, background, fog, shadows, plus
+  // directional / point / rect-area light families.
+  const [lightValues, setLightLeva] = useControls(() => ({
     Environment: folder({
       environment: {
         label: "Scene",
@@ -761,20 +749,379 @@ export default function BagViewer({
         options: { Default: "default", Smoke: "smoke", Dim: "dim" },
       },
     }, { collapsed: false }),
-  }), []);
 
-  // Destructure the flat values object so the rest of the component
-  // keeps consuming each field by name — unchanged from the pre-
-  // factory-form call.
+    HDRI: folder({
+      lighting: {
+        label: "Preset", value: iMat?.lighting ?? "studio",
+        options: {
+          Studio: "studio",
+          Warehouse: "warehouse",
+          City: "city",
+          Forest: "forest",
+          Sunset: "sunset",
+          Rave: "rave",
+          "Kominka Studio (custom)": "kominka",
+        },
+      },
+      envIntensity: {
+        label: "HDRI Intensity", value: iLighting.envIntensity, min: 0, max: 3, step: 0.01,
+      },
+    }, { collapsed: false }),
+
+    "Tone Mapping": folder({
+      toneMappingCurve: {
+        label: "Curve", value: "aces",
+        options: {
+          "ACES Filmic": "aces",
+          AgX: "agx",
+          Cineon: "cineon",
+          Reinhard: "reinhard",
+          Linear: "linear",
+          None: "none",
+        },
+      },
+      toneMappingExposure: {
+        label: "Exposure", value: 1.4, min: 0.1, max: 3, step: 0.01,
+      },
+    }, { collapsed: true }),
+
+    Background: folder({
+      backgroundMode: {
+        label: "Mode", value: "flat",
+        options: { Flat: "flat", Gradient: "gradient", Transparent: "transparent" },
+      },
+      backgroundColor1: {
+        label: "Color 1", value: "#eef1f8",
+        render: (get) => get("Background.backgroundMode") !== "transparent",
+      },
+      backgroundColor2: {
+        label: "Color 2", value: "#c4cdd8",
+        render: (get) => get("Background.backgroundMode") === "gradient",
+      },
+      backgroundAngle: {
+        label: "Angle (deg)", value: 180, min: 0, max: 360, step: 1,
+        render: (get) => get("Background.backgroundMode") === "gradient",
+      },
+    }, { collapsed: true }),
+
+    Fog: folder({
+      fogEnabled: { label: "Enabled", value: false },
+      fogColor: {
+        label: "Color", value: "#cccccc",
+        render: (get) => get("Fog.fogEnabled"),
+      },
+      fogNear: {
+        label: "Near", value: 2, min: 0, max: 20, step: 0.1,
+        render: (get) => get("Fog.fogEnabled"),
+      },
+      fogFar: {
+        label: "Far", value: 10, min: 0, max: 50, step: 0.1,
+        render: (get) => get("Fog.fogEnabled"),
+      },
+    }, { collapsed: true }),
+
+    Shadows: folder({
+      shadowsEnabled: { label: "Enabled", value: false },
+      shadowMapSize: {
+        label: "Map Size", value: 1024,
+        options: { "Low (512)": 512, "Medium (1024)": 1024, "High (2048)": 2048, "Ultra (4096)": 4096 },
+        render: (get) => get("Shadows.shadowsEnabled"),
+      },
+      shadowRadius: {
+        label: "Softness", value: 4, min: 0, max: 16, step: 0.1,
+        render: (get) => get("Shadows.shadowsEnabled"),
+      },
+    }, { collapsed: true }),
+
+    Ambient: folder({
+      ambientIntensity: {
+        label: "Intensity", value: iLighting.ambientIntensity, min: 0, max: 3, step: 0.01,
+      },
+      ambientColor: { label: "Color", value: "#ffffff" },
+    }, { collapsed: false }),
+
+    "Directional Lights": folder({
+      dirCount: { label: "Count", value: 0, min: 0, max: 2, step: 1 },
+      dir1Color: {
+        label: "D1 Color", value: "#ffffff",
+        render: (get) => get("Directional Lights.dirCount") >= 1,
+      },
+      dir1Intensity: {
+        label: "D1 Intensity", value: 2, min: 0, max: 10, step: 0.1,
+        render: (get) => get("Directional Lights.dirCount") >= 1,
+      },
+      dir1Pos: {
+        label: "D1 Position", value: { x: 3, y: 5, z: 3 }, step: 0.1,
+        render: (get) => get("Directional Lights.dirCount") >= 1,
+      },
+      dir2Color: {
+        label: "D2 Color", value: "#e8d8ff",
+        render: (get) => get("Directional Lights.dirCount") >= 2,
+      },
+      dir2Intensity: {
+        label: "D2 Intensity", value: 1, min: 0, max: 10, step: 0.1,
+        render: (get) => get("Directional Lights.dirCount") >= 2,
+      },
+      dir2Pos: {
+        label: "D2 Position", value: { x: -3, y: 5, z: -3 }, step: 0.1,
+        render: (get) => get("Directional Lights.dirCount") >= 2,
+      },
+    }, { collapsed: true }),
+
+    Spotlights: folder({
+      spotCount: {
+        label: "Count", value: iLighting.spotCount, min: 0, max: 4, step: 1,
+      },
+      spot1Color: {
+        label: "S1 Color", value: iLighting.spot1Color,
+        render: (get) => get("Spotlights.spotCount") >= 1,
+      },
+      spot1Intensity: {
+        label: "S1 Intensity", value: iLighting.spot1Intensity, min: 0, max: 200, step: 1,
+        render: (get) => get("Spotlights.spotCount") >= 1,
+      },
+      spot1Pos: {
+        label: "S1 Position", value: iLighting.spot1Pos, step: 0.1,
+        render: (get) => get("Spotlights.spotCount") >= 1,
+      },
+      spot2Color: {
+        label: "S2 Color", value: iLighting.spot2Color,
+        render: (get) => get("Spotlights.spotCount") >= 2,
+      },
+      spot2Intensity: {
+        label: "S2 Intensity", value: iLighting.spot2Intensity, min: 0, max: 200, step: 1,
+        render: (get) => get("Spotlights.spotCount") >= 2,
+      },
+      spot2Pos: {
+        label: "S2 Position", value: iLighting.spot2Pos, step: 0.1,
+        render: (get) => get("Spotlights.spotCount") >= 2,
+      },
+      spot3Color: {
+        label: "S3 Color", value: iLighting.spot3Color,
+        render: (get) => get("Spotlights.spotCount") >= 3,
+      },
+      spot3Intensity: {
+        label: "S3 Intensity", value: iLighting.spot3Intensity, min: 0, max: 200, step: 1,
+        render: (get) => get("Spotlights.spotCount") >= 3,
+      },
+      spot3Pos: {
+        label: "S3 Position", value: iLighting.spot3Pos, step: 0.1,
+        render: (get) => get("Spotlights.spotCount") >= 3,
+      },
+      spot4Color: {
+        label: "S4 Color", value: iLighting.spot4Color,
+        render: (get) => get("Spotlights.spotCount") >= 4,
+      },
+      spot4Intensity: {
+        label: "S4 Intensity", value: iLighting.spot4Intensity, min: 0, max: 200, step: 1,
+        render: (get) => get("Spotlights.spotCount") >= 4,
+      },
+      spot4Pos: {
+        label: "S4 Position", value: iLighting.spot4Pos, step: 0.1,
+        render: (get) => get("Spotlights.spotCount") >= 4,
+      },
+    }, { collapsed: false }),
+
+    "Point Lights": folder({
+      pointCount: { label: "Count", value: 0, min: 0, max: 4, step: 1 },
+      point1Color: {
+        label: "P1 Color", value: "#ffffff",
+        render: (get) => get("Point Lights.pointCount") >= 1,
+      },
+      point1Intensity: {
+        label: "P1 Intensity", value: 20, min: 0, max: 200, step: 1,
+        render: (get) => get("Point Lights.pointCount") >= 1,
+      },
+      point1Pos: {
+        label: "P1 Position", value: { x: 2, y: 2, z: 2 }, step: 0.1,
+        render: (get) => get("Point Lights.pointCount") >= 1,
+      },
+      point2Color: {
+        label: "P2 Color", value: "#ffaa88",
+        render: (get) => get("Point Lights.pointCount") >= 2,
+      },
+      point2Intensity: {
+        label: "P2 Intensity", value: 20, min: 0, max: 200, step: 1,
+        render: (get) => get("Point Lights.pointCount") >= 2,
+      },
+      point2Pos: {
+        label: "P2 Position", value: { x: -2, y: 2, z: 2 }, step: 0.1,
+        render: (get) => get("Point Lights.pointCount") >= 2,
+      },
+      point3Color: {
+        label: "P3 Color", value: "#88aaff",
+        render: (get) => get("Point Lights.pointCount") >= 3,
+      },
+      point3Intensity: {
+        label: "P3 Intensity", value: 20, min: 0, max: 200, step: 1,
+        render: (get) => get("Point Lights.pointCount") >= 3,
+      },
+      point3Pos: {
+        label: "P3 Position", value: { x: 0, y: 2, z: -3 }, step: 0.1,
+        render: (get) => get("Point Lights.pointCount") >= 3,
+      },
+      point4Color: {
+        label: "P4 Color", value: "#ffffff",
+        render: (get) => get("Point Lights.pointCount") >= 4,
+      },
+      point4Intensity: {
+        label: "P4 Intensity", value: 20, min: 0, max: 200, step: 1,
+        render: (get) => get("Point Lights.pointCount") >= 4,
+      },
+      point4Pos: {
+        label: "P4 Position", value: { x: 0, y: 3, z: 0 }, step: 0.1,
+        render: (get) => get("Point Lights.pointCount") >= 4,
+      },
+    }, { collapsed: true }),
+
+    "Rect Area Lights": folder({
+      rectCount: { label: "Count", value: 0, min: 0, max: 4, step: 1 },
+      // Rect 1
+      rect1Color: {
+        label: "R1 Color", value: "#ffffff",
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      rect1Intensity: {
+        label: "R1 Intensity", value: 12, min: 0, max: 100, step: 0.5,
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      rect1Width: {
+        label: "R1 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      rect1Height: {
+        label: "R1 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      // XY are primarily driven by the top-down drag map below the
+      // Leva panel, but we surface them as sliders too so the user
+      // has a numeric fallback. Z is slider-only.
+      rect1X: {
+        label: "R1 X", value: -2, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      rect1Y: {
+        label: "R1 Y", value: 0, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      rect1Z: {
+        label: "R1 Z (height)", value: 3, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 1,
+      },
+      // Rect 2
+      rect2Color: {
+        label: "R2 Color", value: "#fff2d8",
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      rect2Intensity: {
+        label: "R2 Intensity", value: 10, min: 0, max: 100, step: 0.5,
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      rect2Width: {
+        label: "R2 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      rect2Height: {
+        label: "R2 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      rect2X: {
+        label: "R2 X", value: 2, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      rect2Y: {
+        label: "R2 Y", value: 0, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      rect2Z: {
+        label: "R2 Z (height)", value: 3, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 2,
+      },
+      // Rect 3
+      rect3Color: {
+        label: "R3 Color", value: "#d8e8ff",
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      rect3Intensity: {
+        label: "R3 Intensity", value: 8, min: 0, max: 100, step: 0.5,
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      rect3Width: {
+        label: "R3 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      rect3Height: {
+        label: "R3 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      rect3X: {
+        label: "R3 X", value: 0, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      rect3Y: {
+        label: "R3 Y", value: -3, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      rect3Z: {
+        label: "R3 Z (height)", value: 2, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 3,
+      },
+      // Rect 4
+      rect4Color: {
+        label: "R4 Color", value: "#ffffff",
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+      rect4Intensity: {
+        label: "R4 Intensity", value: 6, min: 0, max: 100, step: 0.5,
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+      rect4Width: {
+        label: "R4 Width", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+      rect4Height: {
+        label: "R4 Height", value: 2, min: 0.1, max: 10, step: 0.1,
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+      rect4X: {
+        label: "R4 X", value: 0, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+      rect4Y: {
+        label: "R4 Y", value: 3, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+      rect4Z: {
+        label: "R4 Z (height)", value: 4, min: -6, max: 6, step: 0.05,
+        render: (get) => get("Rect Area Lights.rectCount") >= 4,
+      },
+    }, { collapsed: false }),
+
+    // SAVE button saves the full lighting rig to localStorage under the
+    // active environment's key. Handler routed through lightingOpsRef so
+    // the button sees live values rather than schema-build-time captures.
+    "Save Lighting for Environment": button(() =>
+      lightingOpsRef.current.save()
+    ),
+    // RESET swaps the rig back to LIGHTING_DEFAULTS and wipes the
+    // stored blob for the active env. Replaces the old portal-
+    // injected icon that used to live in the "Lighting" folder
+    // title — that folder no longer exists now that each lighting
+    // concern has its own top-level folder.
+    "Reset Lighting to Defaults": button(() =>
+      lightingOpsRef.current.reset()
+    ),
+    // See matStore note above — settings slot is arg2, not arg3.
+  }), { store: lightStore }, []);
+
+  // Destructure the flat values objects — Materials fields from
+  // `values`, Lighting/Scene fields from `lightValues`. Naming is
+  // preserved so the rest of the component keeps consuming each
+  // knob by the same variable it always did.
   const {
     model,
     finish, metalness, roughness, bagColor,
-    autoRotate, lighting, environment,
-    ambientIntensity, envIntensity, spotCount,
-    spot1Color, spot1Intensity, spot1Pos,
-    spot2Color, spot2Intensity, spot2Pos,
-    spot3Color, spot3Intensity, spot3Pos,
-    spot4Color, spot4Intensity, spot4Pos,
+    autoRotate,
     labelMetalness, labelRoughness, labelVarnish, labelMaterial,
     labelMatFinish, labelMatMetalness, labelMatRoughness,
     layer2Metalness, layer2Roughness, layer2Varnish, layer2Material,
@@ -782,6 +1129,45 @@ export default function BagViewer({
     layer3Metalness, layer3Roughness, layer3Varnish, layer3Material,
     layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
   } = values;
+
+  const {
+    lighting,
+    environment,
+    // Tone mapping
+    toneMappingCurve, toneMappingExposure,
+    // Background
+    backgroundMode, backgroundColor1, backgroundColor2, backgroundAngle,
+    // Fog
+    fogEnabled, fogColor, fogNear, fogFar,
+    // Shadows
+    shadowsEnabled, shadowMapSize, shadowRadius,
+    // Ambient
+    ambientIntensity, ambientColor,
+    // Directional
+    dirCount,
+    dir1Color, dir1Intensity, dir1Pos,
+    dir2Color, dir2Intensity, dir2Pos,
+    // HDRI
+    envIntensity,
+    // Spotlights (count kept in lighting store now)
+    spotCount,
+    spot1Color, spot1Intensity, spot1Pos,
+    spot2Color, spot2Intensity, spot2Pos,
+    spot3Color, spot3Intensity, spot3Pos,
+    spot4Color, spot4Intensity, spot4Pos,
+    // Point lights
+    pointCount,
+    point1Color, point1Intensity, point1Pos,
+    point2Color, point2Intensity, point2Pos,
+    point3Color, point3Intensity, point3Pos,
+    point4Color, point4Intensity, point4Pos,
+    // Rect area lights
+    rectCount,
+    rect1Color, rect1Intensity, rect1Width, rect1Height, rect1X, rect1Y, rect1Z,
+    rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
+    rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
+    rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
+  } = lightValues;
 
   // ── Lighting persistence wiring ────────────────────────────────────────────
   // Keep a snapshot of the current Leva lighting values in a ref so
@@ -821,7 +1207,7 @@ export default function BagViewer({
     reset: () => {
       const env = envRef.current;
       clearLightingForEnv(env);
-      setLeva(LIGHTING_DEFAULTS as unknown as Record<string, unknown>);
+      setLightLeva(LIGHTING_DEFAULTS as unknown as Record<string, unknown>);
     },
   };
 
@@ -833,8 +1219,8 @@ export default function BagViewer({
   useEffect(() => {
     const env = environment as SceneEnvironment;
     const stored = loadLightingForEnv(env);
-    setLeva((stored ?? LIGHTING_DEFAULTS) as unknown as Record<string, unknown>);
-    // Purposefully exclude setLeva from deps — it's stable across
+    setLightLeva((stored ?? LIGHTING_DEFAULTS) as unknown as Record<string, unknown>);
+    // Purposefully exclude setLightLeva from deps — it's stable across
     // renders by Leva contract, and including it would confuse eslint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [environment]);
@@ -905,31 +1291,83 @@ export default function BagViewer({
     onMaterialChange,
   ]);
 
+  // Background CSS for the Canvas wrapper — honours the Background
+  // folder's mode + color(s) + gradient angle. When mode is
+  // "transparent" we emit an empty string so the page's own bg shows
+  // through; Canvas itself always renders with its alpha-capable gl
+  // context (scene.background is intentionally NOT set, so the
+  // wrapper CSS wins). Gradient angle is in CSS convention (0° = to
+  // top), so the Leva 0-360 slider maps 1:1.
+  const wrapperBackground = useMemo(() => {
+    if (backgroundMode === "transparent") return "transparent";
+    if (backgroundMode === "gradient") {
+      return `linear-gradient(${backgroundAngle}deg, ${backgroundColor1}, ${backgroundColor2})`;
+    }
+    return backgroundColor1;
+  }, [backgroundMode, backgroundColor1, backgroundColor2, backgroundAngle]);
+
+  // Resolve the HDRI preset. "kominka" is our custom EXR dropped into
+  // public/hdri at load time; every other value is one of drei's
+  // bundled preset names and goes through the `preset` prop.
+  const hdriIsCustom = lighting === "kominka";
+  const hdriPreset = resolveEnvironmentPreset(
+    hdriIsCustom ? "studio" : (lighting as BagLighting)
+  );
+
+  // Three.js tone mapping curve — dropdown value is a short string
+  // matched against a lookup table. Fall back to ACES if Leva ever
+  // feeds something unexpected.
+  const toneMapping =
+    TONE_MAPPING_MAP[toneMappingCurve as string] ?? THREE.ACESFilmicToneMapping;
+
   return (
     <>
-      {/* Portal-injected reset icon in the Lighting folder's title
-          row. Lives outside the Canvas because it's a DOM button, not
-          a three.js primitive — React routes the child through the
-          host element the component finds in the Leva panel. */}
-      <LightingResetIcon onReset={() => lightingOpsRef.current.reset()} />
+      {/* The old portal-injected reset icon targeted the "Lighting"
+          Leva folder title; since each lighting concern now has its
+          own folder (HDRI / Tone Mapping / Ambient / …), the reset
+          control is a regular button at the bottom of the Lighting
+          sidebar instead. */}
+      <div
+        // Wrapper that owns the CSS background so we can do gradients
+        // without forcing the Canvas to rebuild. Canvas itself keeps
+        // its default alpha-capable gl context; scene.background is
+        // NOT set (we drop the `<color attach="background">` below)
+        // so whatever the wrapper shows through reads as the scene's
+        // sky. Takes 100% of the parent's box so nothing changes in
+        // the page layout.
+        style={{
+          width: "100%",
+          height: "100%",
+          background: wrapperBackground,
+        }}
+      >
     <Canvas
       camera={{ position: [0, -0.3, 4.5], fov: 42 }}
       gl={{
         antialias: true,
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: isRave ? 1.1 : 1.4,
+        toneMapping,
+        toneMappingExposure,
         preserveDrawingBuffer: true,
+        alpha: true,
       }}
-      shadows
+      shadows={shadowsEnabled}
       dpr={[1, 2]}
       style={{ width: "100%", height: "100%" }}
     >
-      <color attach="background" args={[backgroundColor]} />
+      {/* Fog — optional, additive to the scene. Linear near/far style
+          (not exponential) so the Leva sliders map 1:1 to world units. */}
+      {fogEnabled && <fog attach="fog" args={[fogColor as string, fogNear as number, fogFar as number]} />}
       {/* Ambient is user-controllable now. Rave preset still overrides
           ambient to near-zero so the coloured point lights dominate; in
           every other mode the Lighting → Ambient slider sets the value,
-          further scaled by Dim's 0.2 multiplier. */}
-      {!isRave && <ambientLight intensity={ambientIntensity * dimScale} />}
+          further scaled by Dim's 0.2 multiplier and coloured per the
+          Ambient folder's colour picker. */}
+      {!isRave && (
+        <ambientLight
+          intensity={ambientIntensity * dimScale}
+          color={ambientColor as string}
+        />
+      )}
 
       <Suspense fallback={null}>
         {isRave ? (
@@ -938,9 +1376,14 @@ export default function BagViewer({
             {/* Turned way down — keeps colored lights dominant on reflections */}
             <Environment preset="studio" background={false} environmentIntensity={0.22 * envIntensity} />
           </>
+        ) : hdriIsCustom ? (
+          <Environment
+            files="/hdri/studio_kominka_01_4k.exr"
+            environmentIntensity={dimScale * envIntensity}
+          />
         ) : (
           <Environment
-            preset={lighting as "studio"}
+            preset={hdriPreset}
             environmentIntensity={dimScale * envIntensity}
           />
         )}
@@ -969,6 +1412,7 @@ export default function BagViewer({
             penumbra={0.8}
             distance={14}
             decay={2}
+            castShadow={shadowsEnabled}
           />
         )}
         {spotCount >= 2 && (
@@ -980,6 +1424,7 @@ export default function BagViewer({
             penumbra={0.8}
             distance={14}
             decay={2}
+            castShadow={shadowsEnabled}
           />
         )}
         {spotCount >= 3 && (
@@ -991,6 +1436,7 @@ export default function BagViewer({
             penumbra={0.8}
             distance={14}
             decay={2}
+            castShadow={shadowsEnabled}
           />
         )}
         {spotCount >= 4 && (
@@ -1002,6 +1448,111 @@ export default function BagViewer({
             penumbra={0.8}
             distance={14}
             decay={2}
+            castShadow={shadowsEnabled}
+          />
+        )}
+
+        {/* Directional lights — sun/strong key-light style. Parallel
+            rays, distance-independent. Auto-aimed at origin via default
+            target position (three.js convention). */}
+        {dirCount >= 1 && (
+          <directionalLight
+            position={[dir1Pos.x, dir1Pos.y, dir1Pos.z]}
+            intensity={dir1Intensity}
+            color={dir1Color}
+            castShadow={shadowsEnabled}
+          />
+        )}
+        {dirCount >= 2 && (
+          <directionalLight
+            position={[dir2Pos.x, dir2Pos.y, dir2Pos.z]}
+            intensity={dir2Intensity}
+            color={dir2Color}
+            castShadow={shadowsEnabled}
+          />
+        )}
+
+        {/* Point lights — omnidirectional, distance falloff. Useful as
+            practical / accent lights around the scene. No shadows (too
+            expensive with multiple point lights; enable manually via
+            DevTools if needed). */}
+        {pointCount >= 1 && (
+          <pointLight
+            position={[point1Pos.x, point1Pos.y, point1Pos.z]}
+            intensity={point1Intensity}
+            color={point1Color}
+            distance={14}
+            decay={2}
+          />
+        )}
+        {pointCount >= 2 && (
+          <pointLight
+            position={[point2Pos.x, point2Pos.y, point2Pos.z]}
+            intensity={point2Intensity}
+            color={point2Color}
+            distance={14}
+            decay={2}
+          />
+        )}
+        {pointCount >= 3 && (
+          <pointLight
+            position={[point3Pos.x, point3Pos.y, point3Pos.z]}
+            intensity={point3Intensity}
+            color={point3Color}
+            distance={14}
+            decay={2}
+          />
+        )}
+        {pointCount >= 4 && (
+          <pointLight
+            position={[point4Pos.x, point4Pos.y, point4Pos.z]}
+            intensity={point4Intensity}
+            color={point4Color}
+            distance={14}
+            decay={2}
+          />
+        )}
+
+        {/* Rect-area lights — flat "softbox" emitters. Width/height
+            scale the emissive surface; XY position is set via the
+            top-down drag map in the Lighting sidebar, Z is a slider.
+            Each one auto-aims at world origin so the whole bag is
+            always in frame. No shadows (WebGL limitation on area
+            lights). */}
+        {rectCount >= 1 && (
+          <AimedRectAreaLight
+            position={[rect1X, rect1Y, rect1Z]}
+            color={rect1Color}
+            intensity={rect1Intensity}
+            width={rect1Width}
+            height={rect1Height}
+          />
+        )}
+        {rectCount >= 2 && (
+          <AimedRectAreaLight
+            position={[rect2X, rect2Y, rect2Z]}
+            color={rect2Color}
+            intensity={rect2Intensity}
+            width={rect2Width}
+            height={rect2Height}
+          />
+        )}
+        {rectCount >= 3 && (
+          <AimedRectAreaLight
+            position={[rect3X, rect3Y, rect3Z]}
+            color={rect3Color}
+            intensity={rect3Intensity}
+            width={rect3Width}
+            height={rect3Height}
+          />
+        )}
+        {rectCount >= 4 && (
+          <AimedRectAreaLight
+            position={[rect4X, rect4Y, rect4Z]}
+            color={rect4Color}
+            intensity={rect4Intensity}
+            width={rect4Width}
+            height={rect4Height}
           />
         )}
 
@@ -1119,6 +1670,7 @@ export default function BagViewer({
         maxPolarAngle={Math.PI * 0.85}
       />
     </Canvas>
+      </div>
     </>
   );
 }

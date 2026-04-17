@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Leva } from "leva";
+import { Leva, LevaPanel, useCreateStore } from "leva";
 import SaveToOutreachDialog, {
   type SaveSource,
 } from "@/components/SaveToOutreachDialog";
@@ -17,6 +17,7 @@ import {
 } from "@/lib/bagMaterial";
 import { getSetById } from "@/lib/brands";
 import { convertImageToWebPLogged } from "@/lib/image";
+import RectLightMap from "@/components/RectLightMap";
 import type { SceneEnvironment } from "@/lib/types";
 
 // Shared theme for the docked Leva panel — matches the rest of the UI chrome.
@@ -80,6 +81,40 @@ export default function CalyxPreview() {
   // Active model — driven by BagViewer's Leva dropdown, surfaced here so the
   // upload buttons can re-label themselves (Bag Front/Back → Layer 2/3 Art).
   const [currentModel, setCurrentModel] = useState<"bag" | "jar">("bag");
+
+  // Two independent Leva stores — one for the Material controls, one for the
+  // Lighting controls. Each backs its own right-side sidebar panel so the
+  // user can collapse them independently. BagViewer receives both stores
+  // and binds useControls calls to each, routing material-ish knobs to
+  // matStore and lighting/scene knobs to lightStore.
+  const matStore = useCreateStore();
+  const lightStore = useCreateStore();
+
+  // Collapse state for each sidebar. Defaults to both open so the Leva
+  // panels are visible on first load. Persisted to localStorage so the
+  // layout survives reloads.
+  const [matOpen, setMatOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const v = window.localStorage.getItem("calyx:sidebar:materials");
+    return v === null ? true : v === "1";
+  });
+  const [lightOpen, setLightOpen] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const v = window.localStorage.getItem("calyx:sidebar:lighting");
+    return v === null ? true : v === "1";
+  });
+  useEffect(() => {
+    window.localStorage.setItem(
+      "calyx:sidebar:materials",
+      matOpen ? "1" : "0"
+    );
+  }, [matOpen]);
+  useEffect(() => {
+    window.localStorage.setItem(
+      "calyx:sidebar:lighting",
+      lightOpen ? "1" : "0"
+    );
+  }, [lightOpen]);
 
   // Active environment — tracked so saves capture the scene layout at save time.
   const [currentEnvironment, setCurrentEnvironment] = useState<"default" | "smoke" | "dim">("default");
@@ -321,6 +356,12 @@ export default function CalyxPreview() {
 
   return (
     <div className="relative w-full h-screen flex flex-col bg-white">
+      {/* Hidden Leva root suppresses the auto-floating panel Leva
+          otherwise mounts to <body> when it sees no explicit <Leva />
+          in the tree. Our visible UI uses two dedicated <LevaPanel>s
+          bound to matStore/lightStore, so the default panel would
+          just be noise. */}
+      <Leva hidden />
 
       {/* ── Header ── */}
       <header className="flex-shrink-0 flex items-center justify-between px-6 h-[58px] bg-white border-b border-[#e8ecf2] z-20">
@@ -618,6 +659,8 @@ export default function CalyxPreview() {
               initialMaterial={initialMaterial}
               initialEnvironment={initialEnvironment}
               initialModel={initialModel}
+              matStore={matStore}
+              lightStore={lightStore}
             />
           )}
           {/* Bottom hint sits over the canvas */}
@@ -626,22 +669,42 @@ export default function CalyxPreview() {
           </div>
         </div>
 
-        {/* Material Controls — docked right column, scrollable */}
-        <aside className="flex-shrink-0 w-[280px] bg-white border-l border-[#e8ecf2] flex flex-col overflow-hidden z-10">
-          <header className="flex-shrink-0 h-[38px] flex items-center px-4 border-b border-[#e8ecf2] select-none">
-            <span className="text-[10px] font-semibold tracking-[0.22em] uppercase text-[#272724]/60">
-              Material Controls
-            </span>
-          </header>
+        {/* ── Materials sidebar (collapsible) ─────────────────────────── */}
+        <CollapsibleSidebar
+          title="Materials"
+          open={matOpen}
+          onToggle={() => setMatOpen((v) => !v)}
+        >
           <div className="flex-1 min-h-0 overflow-y-auto calyx-leva">
-            <Leva
+            <LevaPanel
+              store={matStore}
               fill
               flat
               titleBar={false}
               theme={LEVA_THEME}
             />
           </div>
-        </aside>
+        </CollapsibleSidebar>
+
+        {/* ── Lighting sidebar (collapsible) ──────────────────────────── */}
+        <CollapsibleSidebar
+          title="Lighting"
+          open={lightOpen}
+          onToggle={() => setLightOpen((v) => !v)}
+        >
+          <div className="flex-1 min-h-0 overflow-y-auto calyx-leva">
+            <LevaPanel
+              store={lightStore}
+              fill
+              flat
+              titleBar={false}
+              theme={LEVA_THEME}
+            />
+            {/* Top-down XY drag widget for positioning rect area lights.
+                Reads rect{1-4}X/Y off the lightStore; drags write back. */}
+            <RectLightMap store={lightStore} />
+          </div>
+        </CollapsibleSidebar>
       </div>
 
       {saveSource && (
@@ -659,5 +722,78 @@ export default function CalyxPreview() {
         />
       )}
     </div>
+  );
+}
+
+/* ───────── Collapsible right-side panel ─────────
+   Standard dock-aside with a header row and a content area. The header
+   has a chevron toggle that collapses the whole panel to a thin rail
+   showing just the (rotated) title; a second click expands it back to
+   full width. Works in both directions so both Materials and Lighting
+   can be collapsed independently. Width transitions are animated so
+   the canvas resize reads naturally. */
+function CollapsibleSidebar({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <aside
+      className={`flex-shrink-0 bg-white border-l border-[#e8ecf2] flex flex-col overflow-hidden z-10 transition-[width] duration-200 ease-out ${
+        open ? "w-[280px]" : "w-[36px]"
+      }`}
+    >
+      <header
+        className={`flex-shrink-0 h-[38px] flex items-center border-b border-[#e8ecf2] select-none ${
+          open ? "px-4 justify-between" : "justify-center"
+        }`}
+      >
+        {open && (
+          <span className="text-[10px] font-semibold tracking-[0.22em] uppercase text-[#272724]/60">
+            {title}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onToggle}
+          title={open ? `Collapse ${title}` : `Expand ${title}`}
+          aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
+          className="p-1 rounded hover:bg-[#e8ecf2]/60 text-[#272724]/60 hover:text-[#272724] transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path
+              d={open ? "M4 2l4 4-4 4" : "M8 2l-4 4 4 4"}
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </header>
+      {open ? (
+        children
+      ) : (
+        // Thin collapsed rail — rotate the title so the label is still
+        // visible without any horizontal space spent on it.
+        <div className="flex-1 flex items-start justify-center pt-4">
+          <span
+            className="text-[10px] font-semibold tracking-[0.22em] uppercase text-[#272724]/40 select-none"
+            style={{
+              writingMode: "vertical-rl",
+              transform: "rotate(180deg)",
+            }}
+          >
+            {title}
+          </span>
+        </div>
+      )}
+    </aside>
   );
 }

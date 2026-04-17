@@ -42,3 +42,11 @@ next-env.d.ts
 
 # claude
 .claude/
+
+# Heavy HDR environment assets — keep them out of the repo. We load them
+# at runtime from public/hdri/*.exr and *.hdr; the files themselves get
+# dropped in manually (locally, or fetched by an admin). Committing a
+# 4K EXR (~70MB) permanently bloats the repo history. When shipping
+# for production, use a 1K/2K .hdr version from Poly Haven.
+public/hdri/*.exr
+public/hdri/*.hdr
