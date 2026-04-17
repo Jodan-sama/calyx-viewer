@@ -607,11 +607,17 @@ export default function BagMesh({
     []
   );
 
+  // UV Blacklight kills HDRI-driven reflections on EVERY material so
+  // mylar/foil/chrome/label don't catch studio-white highlights when
+  // the only light should be the violet blacklight rig. Effectively
+  // treats the HDRI as a tiny ambient tint (~2%) rather than a scene.
+  const uvEnvMult = lighting === "uv" ? 0.02 : 1;
+
   useEffect(() => {
     mylarMat.color.set(color);
     mylarMat.metalness = metalness;
     mylarMat.roughness = roughness;
-    mylarMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale;
+    mylarMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale * uvEnvMult;
     mylarMat.iridescence = iridescence;
     mylarMat.iridescenceIOR = iridescenceIOR;
     mylarMat.iridescenceThicknessRange = iridescenceThicknessRange;
@@ -626,17 +632,17 @@ export default function BagMesh({
       mylarMat.color.set(color);
     }
     mylarMat.needsUpdate = true;
-  }, [color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, mylarMat, holographicTex]);
+  }, [color, metalness, roughness, iridescence, iridescenceIOR, iridescenceThicknessRange, envIntensityScale, uvEnvMult, mylarMat, holographicTex]);
 
   // Keep the foil + multi-chrome + prismatic shaders in sync with env scale.
   useEffect(() => {
-    holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
+    holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale * uvEnvMult;
     holographicFoilMat.needsUpdate = true;
-    multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
+    multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale * uvEnvMult;
     multiChromeMat.needsUpdate = true;
-    prismaticFoilMat.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
+    prismaticFoilMat.envMapIntensity = PRISM_ENV_BASE * envIntensityScale * uvEnvMult;
     prismaticFoilMat.needsUpdate = true;
-  }, [envIntensityScale, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
+  }, [envIntensityScale, uvEnvMult, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
 
   useEffect(() => {
     bagScene.traverse((obj) => {
@@ -700,7 +706,7 @@ export default function BagMesh({
 
   useEffect(() => {
     frontLabelMat.map = frontLabelTex;
-    frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
+    frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (labelVarnish) {
       frontLabelMat.metalness = 0;
       frontLabelMat.roughness = VARNISH_ROUGHNESS;
@@ -723,18 +729,18 @@ export default function BagMesh({
     if (labelUV && lighting === "uv") {
       frontLabelMat.emissive = new THREE.Color(UV_GLOW_COLOR);
       frontLabelMat.emissiveMap = frontLabelTex;
-      frontLabelMat.emissiveIntensity = 2.2;
+      frontLabelMat.emissiveIntensity = 6.5;
     } else {
       frontLabelMat.emissive = new THREE.Color(0x000000);
       frontLabelMat.emissiveMap = null;
       frontLabelMat.emissiveIntensity = 1;
     }
     frontLabelMat.needsUpdate = true;
-  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, frontLabelMat, labelUV, lighting]);
+  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, uvEnvMult, frontLabelMat, labelUV, lighting]);
 
   useEffect(() => {
     backLabelMat.map = backLabelTex;
-    backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
+    backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (labelVarnish) {
       backLabelMat.metalness = 0;
       backLabelMat.roughness = VARNISH_ROUGHNESS;
@@ -753,14 +759,14 @@ export default function BagMesh({
     if (labelUV && lighting === "uv") {
       backLabelMat.emissive = new THREE.Color(UV_GLOW_COLOR);
       backLabelMat.emissiveMap = backLabelTex;
-      backLabelMat.emissiveIntensity = 2.2;
+      backLabelMat.emissiveIntensity = 6.5;
     } else {
       backLabelMat.emissive = new THREE.Color(0x000000);
       backLabelMat.emissiveMap = null;
       backLabelMat.emissiveIntensity = 1;
     }
     backLabelMat.needsUpdate = true;
-  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, backLabelMat, labelUV, lighting]);
+  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, uvEnvMult, backLabelMat, labelUV, lighting]);
 
   // ── Layer 3 — optional second decal layer (front + back) ─────────────────
   // Mirrors Layer 2 exactly: independent textures, alpha-bump maps driving a
@@ -826,7 +832,7 @@ export default function BagMesh({
 
   useEffect(() => {
     layer3FrontMat.map = layer3FrontTex;
-    layer3FrontMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
+    layer3FrontMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (layer3Varnish) {
       layer3FrontMat.metalness = 0;
       layer3FrontMat.roughness = VARNISH_ROUGHNESS;
@@ -845,18 +851,18 @@ export default function BagMesh({
     if (layer3UV && lighting === "uv") {
       layer3FrontMat.emissive = new THREE.Color(UV_GLOW_COLOR);
       layer3FrontMat.emissiveMap = layer3FrontTex;
-      layer3FrontMat.emissiveIntensity = 2.2;
+      layer3FrontMat.emissiveIntensity = 6.5;
     } else {
       layer3FrontMat.emissive = new THREE.Color(0x000000);
       layer3FrontMat.emissiveMap = null;
       layer3FrontMat.emissiveIntensity = 1;
     }
     layer3FrontMat.needsUpdate = true;
-  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3FrontMat, layer3UV, lighting]);
+  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, uvEnvMult, layer3FrontMat, layer3UV, lighting]);
 
   useEffect(() => {
     layer3BackMat.map = layer3BackTex;
-    layer3BackMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale;
+    layer3BackMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (layer3Varnish) {
       layer3BackMat.metalness = 0;
       layer3BackMat.roughness = VARNISH_ROUGHNESS;
@@ -875,14 +881,14 @@ export default function BagMesh({
     if (layer3UV && lighting === "uv") {
       layer3BackMat.emissive = new THREE.Color(UV_GLOW_COLOR);
       layer3BackMat.emissiveMap = layer3BackTex;
-      layer3BackMat.emissiveIntensity = 2.2;
+      layer3BackMat.emissiveIntensity = 6.5;
     } else {
       layer3BackMat.emissive = new THREE.Color(0x000000);
       layer3BackMat.emissiveMap = null;
       layer3BackMat.emissiveIntensity = 1;
     }
     layer3BackMat.needsUpdate = true;
-  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3BackMat, layer3UV, lighting]);
+  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, uvEnvMult, layer3BackMat, layer3UV, lighting]);
 
   // ── Material-mode masked variants (Layer 2 + Layer 3, front + back) ──────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
@@ -1099,19 +1105,19 @@ export default function BagMesh({
     } else {
       set.mylar.iridescenceThicknessMap = null;
     }
-    set.mylar.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale;
+    set.mylar.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale * uvEnvMult;
     set.mylar.needsUpdate = true;
 
     set.foil.map = tex;
-    set.foil.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
+    set.foil.envMapIntensity = FOIL_ENV_BASE * envIntensityScale * uvEnvMult;
     set.foil.needsUpdate = true;
 
     set.prismatic.map = tex;
-    set.prismatic.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
+    set.prismatic.envMapIntensity = PRISM_ENV_BASE * envIntensityScale * uvEnvMult;
     set.prismatic.needsUpdate = true;
 
     set.chrome.map = tex;
-    set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
+    set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale * uvEnvMult;
     set.chrome.needsUpdate = true;
   };
 

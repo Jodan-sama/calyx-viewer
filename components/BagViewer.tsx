@@ -1495,12 +1495,17 @@ export default function BagViewer({
   // wrapper CSS wins). Gradient angle is in CSS convention (0° = to
   // top), so the Leva 0-360 slider maps 1:1.
   const wrapperBackground = useMemo(() => {
+    // UV blacklight overrides whatever Background mode the user had
+    // configured. A light / gradient bg ruins the effect since the
+    // fluorescent layers need to read against near-black for the
+    // glow to pop. Force a deep-violet tint regardless.
+    if (isUV) return "#07021a";
     if (backgroundMode === "transparent") return "transparent";
     if (backgroundMode === "gradient") {
       return `linear-gradient(${backgroundAngle}deg, ${backgroundColor1}, ${backgroundColor2})`;
     }
     return backgroundColor1;
-  }, [backgroundMode, backgroundColor1, backgroundColor2, backgroundAngle]);
+  }, [isUV, backgroundMode, backgroundColor1, backgroundColor2, backgroundAngle]);
 
   // Resolve the HDRI preset. "kominka" is our custom EXR dropped into
   // public/hdri at load time; every other value is one of drei's
@@ -1571,10 +1576,13 @@ export default function BagViewer({
         ) : isUV ? (
           <>
             <UVLights />
-            {/* HDRI is pushed way down so non-fluorescent materials read
-                as near-black; fluorescent layers emit independent of
-                the Environment so reflections don't wash them out. */}
-            <Environment preset="studio" background={false} environmentIntensity={0.06 * envIntensity} />
+            {/* HDRI contribution is pinned near-zero regardless of the
+                HDRI Intensity slider — the user's slider would
+                otherwise reintroduce the white studio reflections the
+                UV look is trying to kill. The BagMesh further scales
+                every material's envMapIntensity down when lighting
+                === "uv" so mylar/label don't catch the sky at all. */}
+            <Environment preset="studio" background={false} environmentIntensity={0.02} />
           </>
         ) : hdriIsCustom ? (
           <Environment

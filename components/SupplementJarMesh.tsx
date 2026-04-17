@@ -338,6 +338,10 @@ export default function SupplementJarMesh({
   envIntensityScale = 1,
   floating = true,
 }: SupplementJarMeshProps) {
+  // Kill HDRI-driven reflections on every material when UV Blacklight
+  // is active — same dampening as BagMesh. The violet rig is the only
+  // light the user should see reflected off the jar.
+  const uvEnvMult = lighting === "uv" ? 0.02 : 1;
   const { scene: bodyScene } = useGLTF(JAR_BODY_GLB, true) as { scene: THREE.Group };
   const { scene: labelScene } = useGLTF(JAR_LABEL_GLB, true) as { scene: THREE.Group };
 
@@ -363,9 +367,9 @@ export default function SupplementJarMesh({
   );
 
   useEffect(() => {
-    plasticMat.envMapIntensity = PLASTIC_ENV_BASE * envIntensityScale;
+    plasticMat.envMapIntensity = PLASTIC_ENV_BASE * envIntensityScale * uvEnvMult;
     plasticMat.needsUpdate = true;
-  }, [envIntensityScale, plasticMat]);
+  }, [envIntensityScale, lighting, plasticMat]);
 
   // ── Layer 1 materials (mylar / foil / multi-chrome) ──────────────────────
   // Mirrors BagMesh. We build all three, then select one via layer1Material.
@@ -503,7 +507,7 @@ export default function SupplementJarMesh({
     mylarMat.color.set(labelColor);
     mylarMat.metalness = metalness;
     mylarMat.roughness = roughness;
-    mylarMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale;
+    mylarMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale * uvEnvMult;
     mylarMat.iridescence = iridescence;
     mylarMat.iridescenceIOR = iridescenceIOR;
     mylarMat.iridescenceThicknessRange = iridescenceThicknessRange;
@@ -524,18 +528,19 @@ export default function SupplementJarMesh({
     iridescenceIOR,
     iridescenceThicknessRange,
     envIntensityScale,
+    lighting,
     mylarMat,
     holographicTex,
   ]);
 
   useEffect(() => {
-    holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
-    multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
-    prismaticFoilMat.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
+    holographicFoilMat.envMapIntensity = FOIL_ENV_BASE * envIntensityScale * uvEnvMult;
+    multiChromeMat.envMapIntensity = CHROME_ENV_BASE * envIntensityScale * uvEnvMult;
+    prismaticFoilMat.envMapIntensity = PRISM_ENV_BASE * envIntensityScale * uvEnvMult;
     holographicFoilMat.needsUpdate = true;
     multiChromeMat.needsUpdate = true;
     prismaticFoilMat.needsUpdate = true;
-  }, [envIntensityScale, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
+  }, [envIntensityScale, lighting, holographicFoilMat, multiChromeMat, prismaticFoilMat]);
 
   // Pick the active Layer 1 material — matches BagMesh's traversal logic.
   const layer1Material: THREE.Material = useMemo(() => {
@@ -758,13 +763,13 @@ export default function SupplementJarMesh({
     if (layer2UV && lighting === "uv") {
       layer2Mat.emissive = new THREE.Color(UV_GLOW_COLOR);
       layer2Mat.emissiveMap = layer2Tex;
-      layer2Mat.emissiveIntensity = 2.2;
+      layer2Mat.emissiveIntensity = 6.5;
     } else {
       layer2Mat.emissive = new THREE.Color(0x000000);
       layer2Mat.emissiveMap = null;
       layer2Mat.emissiveIntensity = 1;
     }
-    layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
+    layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer2Mat.needsUpdate = true;
   }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat, layer2UV, lighting]);
 
@@ -859,19 +864,19 @@ export default function SupplementJarMesh({
     } else {
       set.mylar.iridescenceThicknessMap = null;
     }
-    set.mylar.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale;
+    set.mylar.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale * uvEnvMult;
     set.mylar.needsUpdate = true;
 
     set.foil.map = tex;
-    set.foil.envMapIntensity = FOIL_ENV_BASE * envIntensityScale;
+    set.foil.envMapIntensity = FOIL_ENV_BASE * envIntensityScale * uvEnvMult;
     set.foil.needsUpdate = true;
 
     set.prismatic.map = tex;
-    set.prismatic.envMapIntensity = PRISM_ENV_BASE * envIntensityScale;
+    set.prismatic.envMapIntensity = PRISM_ENV_BASE * envIntensityScale * uvEnvMult;
     set.prismatic.needsUpdate = true;
 
     set.chrome.map = tex;
-    set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale;
+    set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale * uvEnvMult;
     set.chrome.needsUpdate = true;
   };
 
@@ -883,6 +888,7 @@ export default function SupplementJarMesh({
     labelColor,
     layer2Surface,
     envIntensityScale,
+    lighting,
     layer2MaskedSet,
     holographicTex,
   ]);
@@ -895,6 +901,7 @@ export default function SupplementJarMesh({
     labelColor,
     layer3Surface,
     envIntensityScale,
+    lighting,
     layer3MaskedSet,
     holographicTex,
   ]);
@@ -939,13 +946,13 @@ export default function SupplementJarMesh({
     if (layer3UV && lighting === "uv") {
       layer3Mat.emissive = new THREE.Color(UV_GLOW_COLOR);
       layer3Mat.emissiveMap = layer3Tex;
-      layer3Mat.emissiveIntensity = 2.2;
+      layer3Mat.emissiveIntensity = 6.5;
     } else {
       layer3Mat.emissive = new THREE.Color(0x000000);
       layer3Mat.emissiveMap = null;
       layer3Mat.emissiveIntensity = 1;
     }
-    layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale;
+    layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer3Mat.needsUpdate = true;
   }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat, layer3UV, lighting]);
 

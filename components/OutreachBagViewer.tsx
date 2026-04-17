@@ -251,14 +251,18 @@ export default function OutreachBagViewer({
   // iff BagViewer's full-rig emit touched the material.
   const customRig = hasCustomRig(mat);
   const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
-  const canvasBg =
-    transparent || bgMode !== "flat"
+  // UV Blacklight forces a near-black scene regardless of the slot's
+  // saved background. A light backdrop washes out the fluorescent
+  // glow, which is the only thing the UV preset is trying to sell.
+  const canvasBg = isUV
+    ? "#07021a"
+    : transparent || bgMode !== "flat"
       ? null
       : customRig
         ? mat.backgroundColor1 ?? "#eef1f8"
         : "#eef1f8";
   const gradientBg =
-    customRig && bgMode === "gradient" && !transparent
+    !isUV && customRig && bgMode === "gradient" && !transparent
       ? resolveWrapperBackground(mat)
       : null;
 
@@ -318,9 +322,7 @@ export default function OutreachBagViewer({
           <Environment
             preset="studio"
             background={false}
-            environmentIntensity={
-              customRig ? (mat.envIntensity ?? 1) * dimScale : 0.06
-            }
+            environmentIntensity={0.02}
           />
         ) : (
           <Environment

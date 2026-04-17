@@ -238,14 +238,15 @@ export default function OutreachJarViewer({
   // Play back the user's full rig when the slot was saved with one.
   const customRig = hasCustomRig(mat);
   const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
-  const canvasBg =
-    transparent || bgMode !== "flat"
+  const canvasBg = isUV
+    ? "#07021a"
+    : transparent || bgMode !== "flat"
       ? null
       : customRig
         ? mat.backgroundColor1 ?? "#eef1f8"
         : "#eef1f8";
   const gradientBg =
-    customRig && bgMode === "gradient" && !transparent
+    !isUV && customRig && bgMode === "gradient" && !transparent
       ? resolveWrapperBackground(mat)
       : null;
 
@@ -300,9 +301,7 @@ export default function OutreachJarViewer({
           <Environment
             preset="studio"
             background={false}
-            environmentIntensity={
-              customRig ? (mat.envIntensity ?? 1) * dimScale : 0.06
-            }
+            environmentIntensity={0.02}
           />
         ) : (
           <Environment
