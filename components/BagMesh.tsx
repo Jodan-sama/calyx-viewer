@@ -611,7 +611,7 @@ export default function BagMesh({
   // mylar/foil/chrome/label don't catch studio-white highlights when
   // the only light should be the violet blacklight rig. Effectively
   // treats the HDRI as a tiny ambient tint (~2%) rather than a scene.
-  const uvEnvMult = lighting === "uv" ? 0.02 : 1;
+  const uvEnvMult = lighting === "uv" ? 0.003 : 1;
 
   useEffect(() => {
     mylarMat.color.set(color);

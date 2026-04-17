@@ -165,10 +165,15 @@ function RaveLights() {
 function UVLights() {
   return (
     <>
-      <pointLight position={[-2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
-      <pointLight position={[2, 2.5, 1.5]} intensity={22} color="#6a00ff" distance={12} decay={2} />
-      <pointLight position={[0, 1.8, -2.5]} intensity={14} color="#aa33ff" distance={10} decay={2} />
-      <ambientLight intensity={0.08} color="#2a1155" />
+      {/* Dim violet key lights — only present to give the bag silhouette
+          enough subtle violet wash to read at all. Kept low so the
+          fluorescent layers' emissive (UV_GLOW_COLOR) dominates
+          every pixel that should glow, rather than competing with
+          a well-lit diffuse base. */}
+      <pointLight position={[-2, 2.5, 1.5]} intensity={8} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[2, 2.5, 1.5]} intensity={8} color="#6a00ff" distance={12} decay={2} />
+      <pointLight position={[0, 1.8, -2.5]} intensity={5} color="#aa33ff" distance={10} decay={2} />
+      <ambientLight intensity={0.02} color="#2a1155" />
     </>
   );
 }
@@ -1582,7 +1587,7 @@ export default function BagViewer({
                 UV look is trying to kill. The BagMesh further scales
                 every material's envMapIntensity down when lighting
                 === "uv" so mylar/label don't catch the sky at all. */}
-            <Environment preset="studio" background={false} environmentIntensity={0.02} />
+            <Environment preset="studio" background={false} environmentIntensity={0.005} />
           </>
         ) : hdriIsCustom ? (
           <Environment

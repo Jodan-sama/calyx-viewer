@@ -341,7 +341,7 @@ export default function SupplementJarMesh({
   // Kill HDRI-driven reflections on every material when UV Blacklight
   // is active — same dampening as BagMesh. The violet rig is the only
   // light the user should see reflected off the jar.
-  const uvEnvMult = lighting === "uv" ? 0.02 : 1;
+  const uvEnvMult = lighting === "uv" ? 0.003 : 1;
   const { scene: bodyScene } = useGLTF(JAR_BODY_GLB, true) as { scene: THREE.Group };
   const { scene: labelScene } = useGLTF(JAR_LABEL_GLB, true) as { scene: THREE.Group };
 
