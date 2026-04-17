@@ -441,6 +441,16 @@ interface BagViewerProps {
    *  and the existing single-panel behaviour is preserved. */
   matStore?: LevaStore;
   lightStore?: LevaStore;
+  /** Caller-owned ref populated on every render with save/reset
+   *  handlers for the *active* environment. Used by the page to
+   *  render the Save / Reset Lighting buttons outside the Leva panel
+   *  (in the Lighting sidebar footer) — they couldn't live inside
+   *  Leva because Leva's render order can't guarantee they sit
+   *  beneath the last conditionally-visible rect-light slider. */
+  lightingOpsRef?: React.MutableRefObject<{
+    save: () => void;
+    reset: () => void;
+  } | null>;
 }
 
 export default function BagViewer({
@@ -458,6 +468,7 @@ export default function BagViewer({
   initialModel,
   matStore,
   lightStore,
+  lightingOpsRef: externalLightingOpsRef,
 }: BagViewerProps) {
   // RectAreaLight support needs a one-time uniforms-library init. Safe to
   // call repeatedly; three.js guards against double-init internally.
@@ -1131,27 +1142,15 @@ export default function BagViewer({
       },
     }, { collapsed: false }),
 
-    // Actions — kept in a dedicated folder at the end of the schema
-    // so they always render AFTER every other folder's contents.
-    //
-    // Leva quirk: top-level button() declarations registered before
-    // conditionally-rendered folder children (like the per-light
-    // R1/R2/R3/R4 sliders that only appear when their Count ≥ N)
-    // get inserted at their declaration-time position in the root
-    // list, which ends up BEFORE the late-arriving conditional
-    // children. Result: the Save/Reset rows overlap R1 Color and
-    // R1 Intensity when the user sets Rect Count to 1. Wrapping them
-    // in a folder forces Leva to render them as part of that folder's
-    // block — guaranteed last because this folder itself is the last
-    // entry in the root schema.
-    Actions: folder({
-      "Save Lighting for Environment": button(() =>
-        lightingOpsRef.current.save()
-      ),
-      "Reset Lighting to Defaults": button(() =>
-        lightingOpsRef.current.reset()
-      ),
-    }, { collapsed: false }),
+    // NOTE: Save Lighting / Reset Lighting buttons used to live
+    // here as Leva button() entries, but Leva renders
+    // conditionally-visible folder children (rect1*, rect2*, etc.)
+    // AFTER their declaration order — which meant the buttons kept
+    // overlapping R1 Color and R1 Intensity no matter where we put
+    // them in the schema. Moved out of Leva entirely and rendered
+    // as plain DOM buttons in the sidebar footer (below the
+    // RectLightMap). Handler still routes through lightingOpsRef
+    // so the save/reset actions read the latest values.
     // See matStore note above — settings slot is arg2, not arg3.
   }), { store: lightStore }, []);
 
@@ -1252,6 +1251,13 @@ export default function BagViewer({
       setLightLeva(LIGHTING_DEFAULTS as unknown as Record<string, unknown>);
     },
   };
+  // Mirror the same handlers into the caller-supplied ref so the
+  // parent page can render Save / Reset buttons outside the Leva
+  // panel. Kept in sync every render so the handlers always see
+  // the latest environment + values snapshot.
+  if (externalLightingOpsRef) {
+    externalLightingOpsRef.current = lightingOpsRef.current;
+  }
 
   // When the user switches environments, load that env's stored rig
   // (or fall back to LIGHTING_DEFAULTS). The first run on mount

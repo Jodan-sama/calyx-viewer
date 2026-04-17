@@ -90,6 +90,17 @@ export default function CalyxPreview() {
   const matStore = useCreateStore();
   const lightStore = useCreateStore();
 
+  // Lighting action handlers — populated by BagViewer every render
+  // so the Save / Reset buttons rendered below the Lighting Leva
+  // panel always call into the latest-state versions. Rendering the
+  // buttons here (instead of as Leva button entries) keeps them
+  // visually below every conditionally-rendered rect-light slider,
+  // which Leva's own layout can't guarantee.
+  const lightingOpsRef = useRef<{
+    save: () => void;
+    reset: () => void;
+  } | null>(null);
+
   // Collapse state for each sidebar. Defaults to both open so the Leva
   // panels are visible on first load. Persisted to localStorage so the
   // layout survives reloads.
@@ -661,6 +672,7 @@ export default function CalyxPreview() {
               initialModel={initialModel}
               matStore={matStore}
               lightStore={lightStore}
+              lightingOpsRef={lightingOpsRef}
             />
           )}
           {/* Bottom hint sits over the canvas */}
@@ -709,6 +721,27 @@ export default function CalyxPreview() {
               panel gets tall enough to scroll. */}
           <div className="flex-shrink-0 border-t border-[#e8ecf2]">
             <RectLightMap store={lightStore} />
+          </div>
+          {/* Save / Reset lighting — rendered as plain buttons beneath
+              the rect-light map so they can't collide with Leva's
+              conditional rect-light sliders. Handlers are routed
+              through `lightingOpsRef`, which BagViewer populates on
+              every render with up-to-date save/reset closures. */}
+          <div className="flex-shrink-0 border-t border-[#e8ecf2] px-4 py-3 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => lightingOpsRef.current?.save()}
+              className="h-8 rounded-full text-[11px] font-semibold tracking-[0.12em] uppercase text-white bg-[#0033A1] hover:bg-[#001F60] transition-colors select-none"
+            >
+              Save Lighting for Environment
+            </button>
+            <button
+              type="button"
+              onClick={() => lightingOpsRef.current?.reset()}
+              className="h-8 rounded-full text-[11px] font-semibold tracking-[0.12em] uppercase text-[#272724] bg-white border border-[#e8ecf2] hover:border-[#0033A1]/50 hover:text-[#0033A1] transition-colors select-none"
+            >
+              Reset Lighting to Defaults
+            </button>
           </div>
         </CollapsibleSidebar>
       </div>

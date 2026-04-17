@@ -604,7 +604,14 @@ export default function BagMesh({
       // geometry so our mutations stay scoped to this render tree.
       m.geometry = m.geometry.clone();
       const geo = m.geometry;
-      geo.computeVertexNormals();
+
+      // IMPORTANT: we do NOT call computeVertexNormals here.
+      // Experiments showed the GLB has mixed triangle winding on
+      // each panel, so winding-derived normals come out averaged to
+      // nearly-zero on some vertices and with an unpredictable sign
+      // on others. Keep the GLB's *stored* normals and just force
+      // each vertex's outward direction to agree with the panel
+      // (front / back) it sits on.
 
       const pos = geo.attributes.position as THREE.BufferAttribute;
       const nor = geo.attributes.normal as THREE.BufferAttribute;
@@ -612,13 +619,13 @@ export default function BagMesh({
 
       normalMat.getNormalMatrix(m.matrixWorld);
 
-      // Flip any vertex whose world-space normal Z sign disagrees
-      // with its world-space position Z sign. Front panel wants
-      // +Z outward normals; back wants -Z. Gate on |worldN.z| > 0.3
-      // so side gusset / bottom-pleat vertices whose normals
-      // legitimately point dominantly sideways aren't spuriously
-      // negated. Seam-adjacent vertices (|pz| ≈ 0) are ambiguous —
-      // skip them.
+      // For every vertex whose world-space normal has a meaningful
+      // Z component (|nz| > 0.3 → it's a panel face, not a side
+      // gusset), force the sign of worldN.z to match sign(worldPos.z).
+      // Flipping the local normal negates its world transform too, so
+      // mutating the local buffer here produces the correct world
+      // direction after the normal matrix is applied at shade time.
+      // Seam vertices (|pz| ≈ 0) get left alone.
       const count = Math.min(pos.count, nor.count);
       const NZ_THRESHOLD = 0.3;
       const POS_Z_EPS = 0.001;
