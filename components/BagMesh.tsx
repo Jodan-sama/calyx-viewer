@@ -6,6 +6,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
+import { applyPrismaticShader } from "@/lib/foilShaders";
 
 interface BagMeshProps {
   // ── Base surface (mylar / foil / multi-chrome / custom) ─────────────────
@@ -257,15 +258,13 @@ function buildLabelGeo(
   }
   geo.computeVertexNormals();
 
-  // Belt-and-suspenders: check whether the whole panel's normals
-  // end up pointing inward as a consensus (sum of Z vs expected
-  // outward sign). The current mylar bag GLB doesn't trip this —
-  // runtime diagnostics confirmed sumZ≈+58k for front and ≈-59k
-  // for back on a typical load — but it's cheap insurance against
-  // a future GLB swap whose winding has the opposite convention.
-  // A global inversion preserves relative orientation of zipper-
-  // edge normals that legitimately point in non-Z directions, so
-  // we don't mangle curved features.
+  // Panel-outward safety: if the whole panel's computed normals
+  // consensus-point inward (sum-of-Z sign disagrees with the side's
+  // outward sign), flip every normal in one go. Cheap insurance
+  // against a future GLB swap whose winding convention differs;
+  // current bag doesn't trip this but it's essentially free to keep.
+  // Global flip preserves the relative orientation of zipper-edge
+  // normals that legitimately point in non-Z directions.
   const normals = geo.attributes.normal as THREE.BufferAttribute;
   let sumZ = 0;
   for (let i = 0; i < normals.count; i++) sumZ += normals.getZ(i);
@@ -428,50 +427,7 @@ export default function BagMesh({
     const mat = new THREE.MeshPhysicalMaterial({
       metalness: 1.0, roughness: 0.0, envMapIntensity: PRISM_ENV_BASE, side: THREE.DoubleSide,
     });
-    mat.onBeforeCompile = (shader) => {
-      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <worldpos_vertex>',
-        `#include <worldpos_vertex>
-        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-      );
-      shader.fragmentShader = `varying vec3 vWorldPos;\n` + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <dithering_fragment>',
-        `#include <dithering_fragment>
-        vec3 wN = normalize(vNormal);
-        vec3 vd = normalize(cameraPosition - vWorldPos);
-        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
-        // Rotate world XY by ~37° so the grating lines run diagonally and
-        // catch highlights regardless of surface orientation.
-        float ca = 0.7986; // cos(0.64)
-        float sa = 0.6018; // sin(0.64)
-        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
-                        vWorldPos.x * sa + vWorldPos.y * ca);
-        // Fine parallel grating pattern along the rotated X axis.
-        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
-        // Rainbow hue — shifts along the streak direction (rot.y), with view
-        // angle, and with surface normal so movement reveals colour flow.
-        float hue = fract(
-          rot.y * 4.5 +
-          ndv * 1.4 +
-          wN.x * 0.35 +
-          wN.y * 0.25
-        );
-        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        // Lift the rainbow into a pastel range (min 0.72, max 1.0) so
-        // saturated hues read as powdered pastels — soft pink,
-        // peach, mint, lavender, sky — rather than primary rainbow.
-        vec3 pastel = rainbow * 0.28 + 0.72;
-        vec3 chrome = vec3(0.92, 0.94, 0.98);
-        vec3 prismBand = mix(chrome, pastel, 0.72);
-        // Grating modulates how strongly the pastel reads — peaks
-        // show full tint, troughs pull toward off-white chrome.
-        vec3 finalColor = mix(chrome * 0.95, prismBand, 0.55 + grating * 0.45);
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.60);
-        gl_FragColor.a = 1.0;`
-      );
-    };
+    applyPrismaticShader(mat, { mixStrength: 0.6, preserveAlpha: false });
     return mat;
   }, []);
 
@@ -562,33 +518,15 @@ export default function BagMesh({
   const backLabelTex = backTex;
 
   // ── Bag scene + materials ──────────────────────────────────────────────────
+  // The mylar-bag GLB ships with inconsistent vertex normals — front and
+  // back panels point the same direction in stored data, so one panel ends
+  // up inward-facing at shade time. We fix it at scene-clone time by
+  // forcing each vertex's outward direction (in world space) to agree
+  // with the panel side it sits on: +Z for front (pz > 0), -Z for back.
+  // Plan is to replace the GLB with a correctly-normal'd one; the
+  // workaround below can then be dropped entirely.
   const bagScene = useMemo(() => {
     const clone = scene.clone(true);
-    // The mylar-bag GLB ships with vertex normals baked pointing the
-    // *wrong* way — Debug Normals mode revealed the base rendering
-    // in olive/yellow (nz≈−1) on panels that clearly face +Z. That's
-    // why spotlights produced inverted behaviour between the base
-    // (wrong normals) and the label (winding-correct normals).
-    //
-    // Fix is two passes per mesh:
-    //
-    //   1. `computeVertexNormals()` rewrites every stored normal
-    //      from the triangle winding. That alone fixes the front
-    //      panel (its triangles wind CCW-from-+Z → +Z normals).
-    //
-    //   2. The back panel is a mirrored copy of the front, so after
-    //      matrix bake it winds the same way as the front and step 1
-    //      gives it +Z too — which is inward for the back. We walk
-    //      every vertex in WORLD space, compare normal Z sign to
-    //      position Z sign, and negate the (local) normal whenever
-    //      they disagree. Using world space is critical: individual
-    //      meshes have their own transforms that can rotate local
-    //      +Z onto world −Z; checking local-space Z would flip the
-    //      wrong vertices.
-    //
-    // |nz| > 0.3 gates out gusset / zipper edge vertices whose
-    // normals legitimately point mostly +X or +Y so they don't get
-    // falsely flipped.
     clone.updateMatrixWorld(true);
     const worldPos = new THREE.Vector3();
     const worldN = new THREE.Vector3();
@@ -598,24 +536,13 @@ export default function BagMesh({
       const m = obj as THREE.Mesh;
       if (!m.isMesh || !m.geometry) return;
 
-      // CRITICAL: `Object3D.clone(true)` creates new Mesh instances
-      // but shares each mesh's geometry reference with the original.
-      // Without this explicit geometry.clone() we'd mutate the
-      // useGLTF-cached geometry in place — which becomes a real bug
-      // under React Strict Mode / HMR because the useMemo re-runs
-      // atop already-mutated state, flipping normals twice and
-      // landing us back at the inverted starting state. Clone the
-      // geometry so our mutations stay scoped to this render tree.
+      // Clone the geometry explicitly. `Object3D.clone(recursive)`
+      // shares BufferGeometry references between clones, so mutating
+      // the cloned mesh's geometry would also mutate drei's cached
+      // GLB. Under Strict Mode / HMR that stacks mutations on top of
+      // each other and produces indeterminate normals.
       m.geometry = m.geometry.clone();
       const geo = m.geometry;
-
-      // IMPORTANT: we do NOT call computeVertexNormals here.
-      // Experiments showed the GLB has mixed triangle winding on
-      // each panel, so winding-derived normals come out averaged to
-      // nearly-zero on some vertices and with an unpredictable sign
-      // on others. Keep the GLB's *stored* normals and just force
-      // each vertex's outward direction to agree with the panel
-      // (front / back) it sits on.
 
       const pos = geo.attributes.position as THREE.BufferAttribute;
       const nor = geo.attributes.normal as THREE.BufferAttribute;
@@ -623,13 +550,12 @@ export default function BagMesh({
 
       normalMat.getNormalMatrix(m.matrixWorld);
 
-      // For every vertex whose world-space normal has a meaningful
-      // Z component (|nz| > 0.3 → it's a panel face, not a side
-      // gusset), force the sign of worldN.z to match sign(worldPos.z).
-      // Flipping the local normal negates its world transform too, so
-      // mutating the local buffer here produces the correct world
-      // direction after the normal matrix is applied at shade time.
-      // Seam vertices (|pz| ≈ 0) get left alone.
+      // For every vertex whose world normal has a dominant Z axis
+      // (|nz| > 0.3 — panel face rather than gusset/seam), force
+      // sign(worldN.z) to match sign(worldPos.z). Flipping the local
+      // normal negates its world transform too, so mutating the local
+      // buffer here produces the correct world direction at shade
+      // time. Seam-adjacent vertices (|pz| ≈ 0) stay untouched.
       const count = Math.min(pos.count, nor.count);
       const NZ_THRESHOLD = 0.3;
       const POS_Z_EPS = 0.001;
@@ -983,37 +909,7 @@ export default function BagMesh({
       envMapIntensity: PRISM_ENV_BASE,
       ...commonTransparent,
     });
-    prismatic.onBeforeCompile = (shader) => {
-      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <worldpos_vertex>",
-        `#include <worldpos_vertex>
-        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-      );
-      shader.fragmentShader =
-        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <dithering_fragment>",
-        `#include <dithering_fragment>
-        vec3 wN = normalize(vNormal);
-        vec3 vd = normalize(cameraPosition - vWorldPos);
-        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
-        float ca = 0.7986;
-        float sa = 0.6018;
-        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
-                        vWorldPos.x * sa + vWorldPos.y * ca);
-        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
-        float hue = fract(
-          rot.y * 4.5 + ndv * 1.4 + wN.x * 0.35 + wN.y * 0.25
-        );
-        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        vec3 chrome = vec3(0.90, 0.93, 0.98);
-        vec3 prismBand = mix(chrome, rainbow, 0.72);
-        vec3 finalColor = mix(chrome * 0.88, prismBand, 0.55 + grating * 0.45);
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.85);
-        // gl_FragColor.a left alone — alphaMap chain handles the cutout.`
-      );
-    };
+    applyPrismaticShader(prismatic, { mixStrength: 0.85, preserveAlpha: true });
 
     const chrome = new THREE.MeshPhysicalMaterial({
       metalness: 1.0,

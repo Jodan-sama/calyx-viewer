@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useRef, useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import { Suspense, useRef, useEffect, useMemo } from "react";
 import { Canvas, useThree, useFrame } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -85,123 +84,6 @@ const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
   linear: THREE.LinearToneMapping,
   none: THREE.NoToneMapping,
 };
-
-// ── Lighting reset icon portal ──────────────────────────────────────────────
-// Renders a small circular "↻" button into the Lighting folder's title row
-// in the docked Leva panel. Leva has no first-class API for folder-header
-// actions, so we find the title element by text content and portal a React
-// child into it with absolute positioning. A MutationObserver handles the
-// case where Leva's DOM hasn't mounted yet (or rebuilds mid-session).
-//
-// Clicking the icon invokes the caller-supplied `onReset`, which wipes the
-// current environment's stored lighting in localStorage and snaps Leva
-// back to LIGHTING_DEFAULTS — all handled in BagViewer above. The icon
-// calls `stopPropagation` so the click doesn't also toggle the folder's
-// (already-disabled) collapse state.
-function LightingResetIcon({ onReset }: { onReset: () => void }) {
-  const [host, setHost] = useState<HTMLElement | null>(null);
-
-  useEffect(() => {
-    // Find the Lighting *folder title* row — distinct from any
-    // field label that happens to read "Lighting" (notably the
-    // Scene → Lighting HDRI dropdown, which also has a label of
-    // that exact text). Leva tags every folder container with an
-    // inline `--leva-colors-folderWidgetColor` CSS variable, and
-    // the folder's title row is always its first element child;
-    // that gives us an unambiguous anchor that's immune to the
-    // generated emotion classnames changing between versions.
-    const findTarget = (): HTMLElement | null => {
-      const scope = document.querySelector(".calyx-leva");
-      if (!scope) return null;
-      const folders = scope.querySelectorAll<HTMLDivElement>(
-        'div[style*="--leva-colors-folderWidgetColor"]'
-      );
-      for (const folder of Array.from(folders)) {
-        const title = folder.firstElementChild as HTMLElement | null;
-        if (!title) continue;
-        if (title.textContent?.trim() === "Lighting") return title;
-      }
-      return null;
-    };
-
-    const attach = (el: HTMLElement) => {
-      // The title row needs `position: relative` so our absolutely-
-      // positioned button anchors to it. This is a one-time nudge;
-      // Leva's own styles don't rely on the row's position value.
-      el.style.position = "relative";
-      setHost(el);
-    };
-
-    const first = findTarget();
-    if (first) {
-      attach(first);
-      return;
-    }
-
-    // Leva's Suspense-guarded internals may mount slightly after
-    // this effect runs. Observe body-level DOM changes until the
-    // target appears, then disconnect. Observer is cheap — only
-    // fires on actual subtree mutations.
-    const obs = new MutationObserver(() => {
-      const el = findTarget();
-      if (el) {
-        attach(el);
-        obs.disconnect();
-      }
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
-    return () => obs.disconnect();
-  }, []);
-
-  if (!host) return null;
-
-  return createPortal(
-    <button
-      type="button"
-      onClick={(e) => {
-        // stopPropagation so we don't also toggle the folder's
-        // collapse handler (which is CSS-disabled but still present
-        // in the DOM — a bubbled click would still fire it).
-        e.stopPropagation();
-        onReset();
-      }}
-      title="Reset lighting to defaults (clears saved rig for this environment)"
-      aria-label="Reset lighting"
-      style={{
-        position: "absolute",
-        right: 8,
-        top: "50%",
-        transform: "translateY(-50%)",
-        width: 20,
-        height: 20,
-        padding: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: "50%",
-        border: "1px solid rgba(39, 39, 36, 0.25)",
-        background: "rgba(255, 255, 255, 0.55)",
-        color: "rgba(39, 39, 36, 0.7)",
-        cursor: "pointer",
-        // Re-enable interaction — the CSS that kills folder-title
-        // click-to-collapse sets pointer-events: none on the whole
-        // row, so our portaled child needs to opt back in.
-        pointerEvents: "auto",
-      }}
-    >
-      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
-        <path
-          d="M10 6a4 4 0 1 1-1.17-2.83M10 2v3h-3"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </button>,
-    host
-  );
-}
 
 // ── Screenshot helper — auto-captures on load + exposes manual trigger ────────
 function ScreenshotCapture({
@@ -855,16 +737,16 @@ export default function BagViewer({
       // This toggle mounts a large invisible plane at the bag's
       // base elevation (y = -1.265) with `receiveShadow` on; it
       // doesn't render otherwise so the background (flat /
-      // gradient / transparent) keeps showing through.
+      // gradient / transparent) keeps showing through. Kept visible
+      // regardless of the Enabled toggle so users can find it and
+      // understand what it does before flipping shadows on.
       shadowGround: {
         label: "Ground Plane",
         value: true,
-        render: (get) => get("Shadows.shadowsEnabled"),
       },
       shadowOpacity: {
         label: "Ground Opacity", value: 0.35, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Shadows.shadowsEnabled") && get("Shadows.shadowGround"),
+        render: (get) => get("Shadows.shadowGround"),
       },
       shadowMapSize: {
         label: "Map Size", value: 1024,
@@ -1382,11 +1264,6 @@ export default function BagViewer({
 
   return (
     <>
-      {/* The old portal-injected reset icon targeted the "Lighting"
-          Leva folder title; since each lighting concern now has its
-          own folder (HDRI / Tone Mapping / Ambient / …), the reset
-          control is a regular button at the bottom of the Lighting
-          sidebar instead. */}
       <div
         // Wrapper that owns the CSS background so we can do gradients
         // without forcing the Canvas to rebuild. Canvas itself keeps

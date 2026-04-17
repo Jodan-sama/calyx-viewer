@@ -9,6 +9,7 @@ import {
   mergeVertices,
 } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { FINISH_PRESETS, type BagFinish } from "@/lib/bagMaterial";
+import { applyPrismaticShader } from "@/lib/foilShaders";
 
 // ── Assets ───────────────────────────────────────────────────────────────────
 // The full jar comes from two glbs: one provides the body + lid (we reuse it
@@ -71,12 +72,6 @@ function buildAlphaBumpTexture(src: THREE.Texture): THREE.CanvasTexture | null {
   tex.wrapS = THREE.RepeatWrapping;
   return tex;
 }
-
-/** Kept as an exported type for backwards compatibility with existing callers;
- *  the jar itself no longer branches on Mode — artwork decals are always
- *  rendered as artwork, and "foil"-style masked rendering is reached via the
- *  per-layer Material checkbox instead. */
-export type LayerMode = "artwork" | "foil";
 
 interface SupplementJarMeshProps {
   // ── Layer 1 — the label surface. Behaves exactly like the bag's mylar. ────
@@ -442,41 +437,7 @@ export default function SupplementJarMesh({
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
     });
-    mat.onBeforeCompile = (shader) => {
-      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <worldpos_vertex>",
-        `#include <worldpos_vertex>
-        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-      );
-      shader.fragmentShader =
-        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <dithering_fragment>",
-        `#include <dithering_fragment>
-        vec3 wN = normalize(vNormal);
-        vec3 vd = normalize(cameraPosition - vWorldPos);
-        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
-        float ca = 0.7986;
-        float sa = 0.6018;
-        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
-                        vWorldPos.x * sa + vWorldPos.y * ca);
-        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
-        float hue = fract(
-          rot.y * 4.5 +
-          ndv * 1.4 +
-          wN.x * 0.35 +
-          wN.y * 0.25
-        );
-        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        vec3 pastel = rainbow * 0.28 + 0.72;
-        vec3 chrome = vec3(0.92, 0.94, 0.98);
-        vec3 prismBand = mix(chrome, pastel, 0.72);
-        vec3 finalColor = mix(chrome * 0.95, prismBand, 0.55 + grating * 0.45);
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.60);
-        gl_FragColor.a = 1.0;`
-      );
-    };
+    applyPrismaticShader(mat, { mixStrength: 0.6, preserveAlpha: false });
     return mat;
   }, []);
 
@@ -673,38 +634,7 @@ export default function SupplementJarMesh({
       envMapIntensity: PRISM_ENV_BASE,
       ...commonTransparent,
     });
-    prismatic.onBeforeCompile = (shader) => {
-      shader.vertexShader = `varying vec3 vWorldPos;\n` + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace(
-        "#include <worldpos_vertex>",
-        `#include <worldpos_vertex>
-        vWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
-      );
-      shader.fragmentShader =
-        `varying vec3 vWorldPos;\n` + shader.fragmentShader;
-      shader.fragmentShader = shader.fragmentShader.replace(
-        "#include <dithering_fragment>",
-        `#include <dithering_fragment>
-        vec3 wN = normalize(vNormal);
-        vec3 vd = normalize(cameraPosition - vWorldPos);
-        float ndv = clamp(dot(wN, vd), 0.0, 1.0);
-        float ca = 0.7986;
-        float sa = 0.6018;
-        vec2 rot = vec2(vWorldPos.x * ca - vWorldPos.y * sa,
-                        vWorldPos.x * sa + vWorldPos.y * ca);
-        float grating = sin(rot.x * 220.0) * 0.5 + 0.5;
-        float hue = fract(
-          rot.y * 4.5 + ndv * 1.4 + wN.x * 0.35 + wN.y * 0.25
-        );
-        vec3 rainbow = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-        vec3 pastel = rainbow * 0.28 + 0.72;
-        vec3 chrome = vec3(0.92, 0.94, 0.98);
-        vec3 prismBand = mix(chrome, pastel, 0.72);
-        vec3 finalColor = mix(chrome * 0.95, prismBand, 0.55 + grating * 0.45);
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, finalColor, 0.85);
-        // gl_FragColor.a left alone — alphaMap chain handles cutout.`
-      );
-    };
+    applyPrismaticShader(prismatic, { mixStrength: 0.85, preserveAlpha: true });
 
     const chrome = new THREE.MeshPhysicalMaterial({
       metalness: 1.0,
