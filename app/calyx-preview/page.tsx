@@ -54,8 +54,6 @@ const BagViewer = dynamic(() => import("@/components/BagViewer"), {
   ),
 });
 
-const GEMINI_MODEL = "gemini-3.1-flash-image-preview"; // Nano Banana 2
-const GEMINI_PROMPT = "Make a hyper realistic professional product photography shot of this packaging";
 
 export default function CalyxPreview() {
   // Front artwork — defaults to the branded front asset, overridden by upload.
@@ -271,8 +269,6 @@ export default function CalyxPreview() {
     };
   }, []);
 
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_AI_API_KEY ?? "";
-
   // Shared helper: swap a blob-URL slot, revoking the previous URL if one was
   // created via URL.createObjectURL. Defaults (which are plain /images/…) are
   // left alone on revoke.
@@ -357,7 +353,7 @@ export default function CalyxPreview() {
   }, []);
 
   const handleMakeMagic = useCallback(async () => {
-    if (!screenshotUrl || !apiKey) return;
+    if (!screenshotUrl) return;
     setIsMakingMagic(true);
     setMagicError(null);
     setMagicImageUrl(null);
@@ -367,26 +363,11 @@ export default function CalyxPreview() {
       const [header, base64Data] = screenshotUrl.split(",");
       const mimeType = header.match(/:(.*?);/)?.[1] ?? "image/png";
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: GEMINI_PROMPT },
-                  { inline_data: { mime_type: mimeType, data: base64Data } },
-                ],
-              },
-            ],
-            generationConfig: {
-              responseModalities: ["IMAGE", "TEXT"],
-            },
-          }),
-        }
-      );
+      const res = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mimeType, data: base64Data }),
+      });
 
       const data = await res.json();
       console.log("[Make Magic] API response:", JSON.stringify(data).slice(0, 500));
@@ -416,7 +397,7 @@ export default function CalyxPreview() {
     } finally {
       setIsMakingMagic(false);
     }
-  }, [screenshotUrl, apiKey]);
+  }, [screenshotUrl]);
 
   return (
     <div className="relative w-full h-screen flex flex-col bg-white">
