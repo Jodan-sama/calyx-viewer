@@ -38,6 +38,15 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
+// Tactile = four varnish layers stacked barely apart. The base
+// artwork mesh renders with the varnish material; three extra
+// copies at tiny radial scale bumps. The topmost copy uses a
+// transparent-white cap material (clearcoat + alpha silhouette but
+// no artwork colours), so the stack reads as clear varnish over
+// the printed label rather than multiple painted copies.
+const TACTILE_STACK_SCALES = [1.003, 1.006, 1.009] as const;
+const TACTILE_CAP_OPACITY = 0.25;
+
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
  *  surface where the artwork is actually opaque. */
@@ -91,6 +100,11 @@ interface SupplementJarMeshProps {
   layer2Roughness: number;
   /** Clear-gloss overprint on Layer 2 artwork. */
   layer2Varnish?: boolean;
+  /** Tactile finish on Layer 2 — semi-gloss, stronger bump, and a small
+   *  radial raise so the label sits visibly above the jar surface.
+   *  Mutually exclusive with `layer2Varnish` and `layer2Material` in the
+   *  UI; tactile wins if two are on together. */
+  layer2Tactile?: boolean;
   /** When true, Layer 2's artwork becomes a mask — every opaque pixel shows
    *  the Material finish selected for *this layer* (see `layer2MatFinish`)
    *  rather than the artwork image itself. Effectively turns the artwork
@@ -111,6 +125,8 @@ interface SupplementJarMeshProps {
   layer3Roughness: number;
   /** Clear-gloss overprint on Layer 3 artwork. */
   layer3Varnish?: boolean;
+  /** Tactile finish on Layer 3 — see `layer2Tactile`. */
+  layer3Tactile?: boolean;
   /** When true, Layer 3's artwork becomes a Surface-finish cutout — same
    *  rules as `layer2Material`. */
   layer3Material?: boolean;
@@ -320,6 +336,7 @@ export default function SupplementJarMesh({
   layer2Metalness,
   layer2Roughness,
   layer2Varnish = false,
+  layer2Tactile = false,
   layer2Material = false,
   layer2MatFinish,
   layer2MatMetalness,
@@ -328,6 +345,7 @@ export default function SupplementJarMesh({
   layer3Metalness,
   layer3Roughness,
   layer3Varnish = false,
+  layer3Tactile = false,
   layer3Material = false,
   layer3MatFinish,
   layer3MatMetalness,
@@ -586,6 +604,31 @@ export default function SupplementJarMesh({
   const layer2Mat = useMemo(() => makeDecalMat(-4), []);
   const layer3Mat = useMemo(() => makeDecalMat(-8), []);
 
+  // Tactile top-cap materials — clear, glossy, alpha-clipped. Bind
+  // bumpMap + alphaMap from the layer's alpha-bump tex in a useEffect
+  // further down (same slot where the decal materials get theirs).
+  const makeTactileCapMat = (offset: number) =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: VARNISH_ROUGHNESS,
+      clearcoat: VARNISH_CLEARCOAT,
+      clearcoatRoughness: VARNISH_CLEARCOAT_ROUGHNESS,
+      bumpScale: VARNISH_BUMP_SCALE,
+      opacity: TACTILE_CAP_OPACITY,
+      transparent: true,
+      alphaTest: 0.01,
+      side: THREE.FrontSide,
+      envMapIntensity: DECAL_ENV_BASE,
+      polygonOffset: true,
+      polygonOffsetFactor: offset,
+      polygonOffsetUnits: offset,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer2TactileCapMat = useMemo(() => makeTactileCapMat(-4), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3TactileCapMat = useMemo(() => makeTactileCapMat(-8), []);
+
   // ── Material-mode masked variants (Layer 2 + Layer 3) ────────────────────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
   // cutout mask and the revealed pixels paint with the current Layer 1
@@ -756,13 +799,32 @@ export default function SupplementJarMesh({
     return () => { tex?.dispose(); };
   }, [layer3Tex]);
 
+  // Wire alphaMap (silhouette cutout) and bumpMap (surface texture)
+  // onto the tactile cap materials, tracking scene dim / UV state.
+  useEffect(() => {
+    layer2TactileCapMat.alphaMap = layer2BumpTex;
+    layer2TactileCapMat.bumpMap = layer2BumpTex;
+    layer2TactileCapMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer2TactileCapMat.needsUpdate = true;
+  }, [layer2BumpTex, envIntensityScale, uvEnvMult, layer2TactileCapMat]);
+
+  useEffect(() => {
+    layer3TactileCapMat.alphaMap = layer3BumpTex;
+    layer3TactileCapMat.bumpMap = layer3BumpTex;
+    layer3TactileCapMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3TactileCapMat.needsUpdate = true;
+  }, [layer3BumpTex, envIntensityScale, uvEnvMult, layer3TactileCapMat]);
+
   // Layer 2 artwork material — always artwork mode. Varnish overrides to a
   // glossy clearcoat overprint with a subtle alpha-derived bump. This
   // material only renders when the Material checkbox is OFF; when Material
   // is ON the mesh picks up `layer2Masked` instead.
   useEffect(() => {
     layer2Mat.map = layer2Tex;
-    if (layer2Varnish) {
+    // Tactile uses the varnish material — it's IS a varnish layer,
+    // just rendered three times at barely-different scales (JSX
+    // below) so the stack reads a hair thicker than plain varnish.
+    if (layer2Varnish || layer2Tactile) {
       layer2Mat.metalness = 0;
       layer2Mat.roughness = VARNISH_ROUGHNESS;
       layer2Mat.clearcoat = VARNISH_CLEARCOAT;
@@ -788,7 +850,7 @@ export default function SupplementJarMesh({
     }
     layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer2Mat.needsUpdate = true;
-  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat, layer2UV, lighting]);
+  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, layer2Tactile, envIntensityScale, layer2Mat, layer2UV, lighting]);
 
   // Resolve the effective Material-mode surface for a given layer. Each
   // layer can override Layer 1's finish via `matFinish`; when omitted or set
@@ -945,7 +1007,7 @@ export default function SupplementJarMesh({
 
   useEffect(() => {
     layer3Mat.map = layer3Tex;
-    if (layer3Varnish) {
+    if (layer3Varnish || layer3Tactile) {
       layer3Mat.metalness = 0;
       layer3Mat.roughness = VARNISH_ROUGHNESS;
       layer3Mat.clearcoat = VARNISH_CLEARCOAT;
@@ -971,7 +1033,7 @@ export default function SupplementJarMesh({
     }
     layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer3Mat.needsUpdate = true;
-  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat, layer3UV, lighting]);
+  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, layer3Mat, layer3UV, lighting]);
 
   // ── Scene processing (body + label) ───────────────────────────────────────
   // Body: hide the old glb's built-in label (any non-Plastic primitive) and
@@ -1008,6 +1070,15 @@ export default function SupplementJarMesh({
   // which read as dark vertical stripes under reflective materials), then
   // reproject UVs onto a cylinder. The final geometry is shared by Layer 1
   // (base material), Layer 2 (artwork/foil), and Layer 3 (artwork/foil).
+  // Centred clone of the label geometry + original centroid. The shell
+  // stack scales about mesh-local origin, and the jar's label wraps a
+  // cylinder whose origin sits on the jar's central axis — NOT the
+  // label's centroid. Scaling Y about that origin drifts the stack
+  // vertically; recentring the geometry and repositioning the shell at
+  // the original centroid fixes the pivot.
+  //
+  // Declared alongside `labelGeo` so the two useMemos share the same
+  // dependency surface and stay in lockstep on model swaps.
   const labelGeo = useMemo(() => {
     const clone = labelScene.clone(true);
     clone.updateMatrixWorld(true);
@@ -1165,7 +1236,8 @@ export default function SupplementJarMesh({
            cuts out the current Layer 1 finish (foil/prismatic/chrome/
            matte/…) instead of painting the artwork pixels themselves. With
            Material OFF it's a standard transparent artwork decal (Varnish
-           optionally applies a clearcoat overprint). */}
+           optionally applies a clearcoat overprint). Tactile keeps the
+           artwork flat and adds the clear-varnish shell stack below. */}
       {layer2Tex && (
         <mesh
           geometry={labelGeo}
@@ -1174,15 +1246,49 @@ export default function SupplementJarMesh({
         />
       )}
 
+      {/* Layer 2 tactile — three extra varnish-styled copies at tiny
+           radial scale bumps. The topmost uses the transparent-cap
+           material so the stack reads as clear varnish over the
+           printed label rather than multiple painted copies. */}
+      {layer2Tactile && layer2Tex && TACTILE_STACK_SCALES.map((s, i) => {
+        const isCap = i === TACTILE_STACK_SCALES.length - 1;
+        return (
+          <mesh
+            key={`jar-l2-tactile-${i}`}
+            geometry={labelGeo}
+            material={isCap ? layer2TactileCapMat : layer2Mat}
+            scale={[s, s, s]}
+            renderOrder={2 + i}
+          />
+        );
+      })}
+
       {/* Layer 3 — same behavior as Layer 2, one render order higher so it
            always reads on top when overlapping. */}
       {layer3Tex && (
         <mesh
           geometry={labelGeo}
           material={layer3Material ? layer3Masked : layer3Mat}
-          renderOrder={3}
+          renderOrder={4}
         />
       )}
+
+      {/* Layer 3 tactile — same as Layer 2, just slightly larger
+           scale bumps so the Layer 3 stack sits above Layer 2 if
+           both are on. Topmost again uses the transparent cap. */}
+      {layer3Tactile && layer3Tex && TACTILE_STACK_SCALES.map((s, i) => {
+        const s3 = 1 + (s - 1) * 1.3;
+        const isCap = i === TACTILE_STACK_SCALES.length - 1;
+        return (
+          <mesh
+            key={`jar-l3-tactile-${i}`}
+            geometry={labelGeo}
+            material={isCap ? layer3TactileCapMat : layer3Mat}
+            scale={[s3, s3, s3]}
+            renderOrder={5 + i}
+          />
+        );
+      })}
     </group>
   );
 }

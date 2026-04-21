@@ -657,6 +657,7 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "bag" &&
           !get("Layer 2.labelVarnish") &&
+          !get("Layer 2.labelTactile") &&
           !get("Layer 2.labelMaterial"),
       },
       labelRoughness: {
@@ -664,17 +665,28 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "bag" &&
           !get("Layer 2.labelVarnish") &&
+          !get("Layer 2.labelTactile") &&
           !get("Layer 2.labelMaterial"),
       },
       labelVarnish: {
         label: "Varnish", value: iMat?.labelVarnish ?? false,
         render: (get) =>
           get("Model.model") === "bag" &&
+          !get("Layer 2.labelTactile") &&
+          !get("Layer 2.labelMaterial"),
+      },
+      labelTactile: {
+        label: "Tactile", value: iMat?.labelTactile ?? false,
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          !get("Layer 2.labelVarnish") &&
           !get("Layer 2.labelMaterial"),
       },
       labelMaterial: {
         label: "Material", value: iMat?.labelMaterial ?? false,
-        render: (get) => get("Model.model") === "bag",
+        render: (get) =>
+          get("Model.model") === "bag" &&
+          !get("Layer 2.labelTactile"),
       },
       labelUV: {
         label: "UV Glow", value: iMat?.labelUV ?? false,
@@ -719,6 +731,7 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "jar" &&
           !get("Layer 2.layer2Varnish") &&
+          !get("Layer 2.layer2Tactile") &&
           !get("Layer 2.layer2Material"),
       },
       layer2Roughness: {
@@ -726,17 +739,28 @@ export default function BagViewer({
         render: (get) =>
           get("Model.model") === "jar" &&
           !get("Layer 2.layer2Varnish") &&
+          !get("Layer 2.layer2Tactile") &&
           !get("Layer 2.layer2Material"),
       },
       layer2Varnish: {
         label: "Varnish", value: iMat?.layer2Varnish ?? false,
         render: (get) =>
           get("Model.model") === "jar" &&
+          !get("Layer 2.layer2Tactile") &&
+          !get("Layer 2.layer2Material"),
+      },
+      layer2Tactile: {
+        label: "Tactile", value: iMat?.layer2Tactile ?? false,
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          !get("Layer 2.layer2Varnish") &&
           !get("Layer 2.layer2Material"),
       },
       layer2Material: {
         label: "Material", value: iMat?.layer2Material ?? false,
-        render: (get) => get("Model.model") === "jar",
+        render: (get) =>
+          get("Model.model") === "jar" &&
+          !get("Layer 2.layer2Tactile"),
       },
       layer2UV: {
         label: "UV Glow", value: iMat?.layer2UV ?? false,
@@ -784,20 +808,31 @@ export default function BagViewer({
         label: "Metalness", value: iMat?.layer3Metalness ?? 0.1, min: 0, max: 1, step: 0.01,
         render: (get) =>
           !get("Layer 3.layer3Varnish") &&
+          !get("Layer 3.layer3Tactile") &&
           !get("Layer 3.layer3Material"),
       },
       layer3Roughness: {
         label: "Roughness", value: iMat?.layer3Roughness ?? 0.5, min: 0, max: 1, step: 0.01,
         render: (get) =>
           !get("Layer 3.layer3Varnish") &&
+          !get("Layer 3.layer3Tactile") &&
           !get("Layer 3.layer3Material"),
       },
       layer3Varnish: {
         label: "Varnish", value: iMat?.layer3Varnish ?? false,
-        render: (get) => !get("Layer 3.layer3Material"),
+        render: (get) =>
+          !get("Layer 3.layer3Tactile") &&
+          !get("Layer 3.layer3Material"),
+      },
+      layer3Tactile: {
+        label: "Tactile", value: iMat?.layer3Tactile ?? false,
+        render: (get) =>
+          !get("Layer 3.layer3Varnish") &&
+          !get("Layer 3.layer3Material"),
       },
       layer3Material: {
         label: "Material", value: iMat?.layer3Material ?? false,
+        render: (get) => !get("Layer 3.layer3Tactile"),
       },
       layer3UV: {
         label: "UV Glow", value: iMat?.layer3UV ?? false,
@@ -1236,11 +1271,11 @@ export default function BagViewer({
     model,
     finish, metalness, roughness, bagColor,
     autoRotate,
-    labelMetalness, labelRoughness, labelVarnish, labelMaterial, labelUV,
+    labelMetalness, labelRoughness, labelVarnish, labelTactile, labelMaterial, labelUV,
     labelMatFinish, labelMatMetalness, labelMatRoughness,
-    layer2Metalness, layer2Roughness, layer2Varnish, layer2Material, layer2UV,
+    layer2Metalness, layer2Roughness, layer2Varnish, layer2Tactile, layer2Material, layer2UV,
     layer2MatFinish, layer2MatMetalness, layer2MatRoughness,
-    layer3Metalness, layer3Roughness, layer3Varnish, layer3Material, layer3UV,
+    layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, layer3Material, layer3UV,
     layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
   } = values;
 
@@ -1440,6 +1475,7 @@ export default function BagViewer({
       labelRoughness,
       lighting: lighting as BagLighting,
       labelVarnish,
+      labelTactile,
       labelMaterial,
       labelMatFinish: labelMatFinish as BagFinish,
       labelMatMetalness,
@@ -1447,6 +1483,7 @@ export default function BagViewer({
       layer2Metalness,
       layer2Roughness,
       layer2Varnish,
+      layer2Tactile,
       layer2Material,
       layer2MatFinish: layer2MatFinish as BagFinish,
       layer2MatMetalness,
@@ -1454,6 +1491,7 @@ export default function BagViewer({
       layer3Metalness,
       layer3Roughness,
       layer3Varnish,
+      layer3Tactile,
       layer3Material,
       layer3MatFinish: layer3MatFinish as BagFinish,
       layer3MatMetalness,
@@ -1513,6 +1551,7 @@ export default function BagViewer({
     labelRoughness,
     lighting,
     labelVarnish,
+    labelTactile,
     labelMaterial,
     labelMatFinish,
     labelMatMetalness,
@@ -1520,6 +1559,7 @@ export default function BagViewer({
     layer2Metalness,
     layer2Roughness,
     layer2Varnish,
+    layer2Tactile,
     layer2Material,
     layer2MatFinish,
     layer2MatMetalness,
@@ -1527,6 +1567,7 @@ export default function BagViewer({
     layer3Metalness,
     layer3Roughness,
     layer3Varnish,
+    layer3Tactile,
     layer3Material,
     layer3MatFinish,
     layer3MatMetalness,
@@ -1934,6 +1975,7 @@ export default function BagViewer({
             labelMetalness={labelMetalness}
             labelRoughness={labelRoughness}
             labelVarnish={labelVarnish}
+            labelTactile={labelTactile}
             labelMaterial={labelMaterial}
             // Per-layer Material finish — only read when labelMaterial is on.
             // When the user picks e.g. "Multi-Chrome" here, Layer 2's artwork
@@ -1951,6 +1993,7 @@ export default function BagViewer({
             layer3Metalness={layer3Metalness}
             layer3Roughness={layer3Roughness}
             layer3Varnish={layer3Varnish}
+            layer3Tactile={layer3Tactile}
             layer3Material={layer3Material}
             layer3MatFinish={layer3MatFinish as BagFinish}
             layer3MatMetalness={layer3MatMetalness}
@@ -1989,6 +2032,7 @@ export default function BagViewer({
             layer2Metalness={layer2Metalness}
             layer2Roughness={layer2Roughness}
             layer2Varnish={layer2Varnish}
+            layer2Tactile={layer2Tactile}
             layer2Material={layer2Material}
             layer2MatFinish={layer2MatFinish as BagFinish}
             layer2MatMetalness={layer2MatMetalness}
@@ -1999,6 +2043,7 @@ export default function BagViewer({
             layer3Metalness={layer3Metalness}
             layer3Roughness={layer3Roughness}
             layer3Varnish={layer3Varnish}
+            layer3Tactile={layer3Tactile}
             layer3Material={layer3Material}
             layer3MatFinish={layer3MatFinish as BagFinish}
             layer3MatMetalness={layer3MatMetalness}

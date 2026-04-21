@@ -29,6 +29,12 @@ interface BagMeshProps {
    *  with a tiny alpha-derived bump — only raised where the artwork is
    *  opaque. Background bag surface is unaffected. */
   labelVarnish?: boolean;
+  /** When true, the label becomes a "tactile" finish — lower shine than
+   *  varnish, stronger bump, and a physical z-offset so the decal mesh
+   *  sits visibly above the surrounding layers. Mimics raised-UV /
+   *  soft-touch print finishes. Takes precedence over `labelVarnish` if
+   *  both are somehow on. */
+  labelTactile?: boolean;
   /** When true, Layer 2's artwork alpha becomes a mask and the opaque
    *  pixels paint with the Material finish selected for *this layer* (see
    *  `labelMatFinish`) rather than the artwork's RGB values. */
@@ -49,6 +55,8 @@ interface BagMeshProps {
   layer3Metalness?: number;
   layer3Roughness?: number;
   layer3Varnish?: boolean;
+  /** See `labelTactile`; same rules, Layer 3 flavour. */
+  layer3Tactile?: boolean;
   layer3Material?: boolean;
   /** Per-layer Material finish for Layer 3. Falls back to Layer 1's finish. */
   layer3MatFinish?: BagFinish;
@@ -100,6 +108,21 @@ const VARNISH_BUMP_SCALE = 0.008;
 const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
+
+// Tactile = four varnish layers stacked barely apart. The base
+// artwork mesh already renders with the varnish material (clearcoat +
+// alpha-bump) when tactile is on; the JSX below drops three more
+// copies of the same mesh at tiny equidistant Z offsets along the
+// panel normal. The TOP copy (last offset) uses a separate
+// transparent-white material — keeps the cutout silhouette and the
+// varnish gloss, but doesn't re-paint the artwork colours, so the
+// stack reads as clear varnish on top of the printed label. Front
+// panels stack +Z, back panels stack −Z.
+const TACTILE_STACK_OFFSETS = [0.0004, 0.0008, 0.0012] as const;
+/** Opacity of the top transparent-varnish cap. Low so the artwork
+ *  below reads through cleanly; the clearcoat still gives the cap
+ *  its characteristic gloss. */
+const TACTILE_CAP_OPACITY = 0.25;
 
 /** Builds a greyscale CanvasTexture whose pixel brightness equals the source
  *  texture's alpha channel, so it can be plugged straight into MeshPhysical
@@ -367,6 +390,7 @@ export default function BagMesh({
   iridescenceThicknessRange = [100, 800],
   finish = "",
   labelVarnish = false,
+  labelTactile = false,
   labelMaterial = false,
   labelMatFinish,
   labelMatMetalness,
@@ -376,6 +400,7 @@ export default function BagMesh({
   layer3Metalness = 0.1,
   layer3Roughness = 0.5,
   layer3Varnish = false,
+  layer3Tactile = false,
   layer3Material = false,
   layer3MatFinish,
   layer3MatMetalness,
@@ -704,9 +729,37 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const backLabelMat = useMemo(buildLabelMat, []);
 
+  // Tactile top-cap material — a clear, glossy, alpha-clipped layer
+  // that rides on the very top of the tactile stack. `map` is left
+  // null so the artwork colours below read through; alphaMap handles
+  // the silhouette cutout; clearcoat + bumpMap preserve the shine
+  // and surface texture.
+  const buildTactileCapMat = () =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: VARNISH_ROUGHNESS,
+      clearcoat: VARNISH_CLEARCOAT,
+      clearcoatRoughness: VARNISH_CLEARCOAT_ROUGHNESS,
+      bumpScale: VARNISH_BUMP_SCALE,
+      opacity: TACTILE_CAP_OPACITY,
+      transparent: true,
+      alphaTest: 0.01,
+      side: THREE.FrontSide,
+      envMapIntensity: LABEL_ENV_BASE,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const frontTactileCapMat = useMemo(buildTactileCapMat, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const backTactileCapMat = useMemo(buildTactileCapMat, []);
+
   // Alpha-derived bump maps — regenerated whenever the artwork changes. Kept
   // in state so the useEffect that applies them to the material can dispose
-  // stale textures cleanly.
+  // stale textures cleanly. Used as the varnish bumpMap (and re-used by the
+  // tactile copies, which share the same material).
   const [frontBumpTex, setFrontBumpTex] = useState<THREE.CanvasTexture | null>(null);
   const [backBumpTex, setBackBumpTex] = useState<THREE.CanvasTexture | null>(null);
 
@@ -724,10 +777,31 @@ export default function BagMesh({
     return () => { tex?.dispose(); };
   }, [backLabelTex]);
 
+  // Wire alphaMap (for silhouette cutout) and bumpMap (for the same
+  // raised feel the underlying varnish has) onto the tactile caps.
+  // envMapIntensity tracks the scene's dim/UV state.
+  useEffect(() => {
+    frontTactileCapMat.alphaMap = frontBumpTex;
+    frontTactileCapMat.bumpMap = frontBumpTex;
+    frontTactileCapMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    frontTactileCapMat.needsUpdate = true;
+  }, [frontBumpTex, envIntensityScale, uvEnvMult, frontTactileCapMat]);
+
+  useEffect(() => {
+    backTactileCapMat.alphaMap = backBumpTex;
+    backTactileCapMat.bumpMap = backBumpTex;
+    backTactileCapMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    backTactileCapMat.needsUpdate = true;
+  }, [backBumpTex, envIntensityScale, uvEnvMult, backTactileCapMat]);
+
   useEffect(() => {
     frontLabelMat.map = frontLabelTex;
     frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (labelVarnish) {
+    // Tactile reuses the varnish material settings — it IS a varnish
+    // layer, just rendered three times at barely-different Z offsets
+    // (see JSX below) so the stack reads as a hair thicker than plain
+    // varnish. Plain uses the user's per-layer metalness/roughness.
+    if (labelVarnish || labelTactile) {
       frontLabelMat.metalness = 0;
       frontLabelMat.roughness = VARNISH_ROUGHNESS;
       frontLabelMat.clearcoat = VARNISH_CLEARCOAT;
@@ -756,12 +830,12 @@ export default function BagMesh({
       frontLabelMat.emissiveIntensity = 1;
     }
     frontLabelMat.needsUpdate = true;
-  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, uvEnvMult, frontLabelMat, labelUV, lighting]);
+  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, labelTactile, envIntensityScale, uvEnvMult, frontLabelMat, labelUV, lighting]);
 
   useEffect(() => {
     backLabelMat.map = backLabelTex;
     backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (labelVarnish) {
+    if (labelVarnish || labelTactile) {
       backLabelMat.metalness = 0;
       backLabelMat.roughness = VARNISH_ROUGHNESS;
       backLabelMat.clearcoat = VARNISH_CLEARCOAT;
@@ -786,7 +860,7 @@ export default function BagMesh({
       backLabelMat.emissiveIntensity = 1;
     }
     backLabelMat.needsUpdate = true;
-  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, uvEnvMult, backLabelMat, labelUV, lighting]);
+  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, labelTactile, envIntensityScale, uvEnvMult, backLabelMat, labelUV, lighting]);
 
   // ── Layer 3 — optional second decal layer (front + back) ─────────────────
   // Mirrors Layer 2 exactly: independent textures, alpha-bump maps driving a
@@ -850,10 +924,48 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer3BackMat = useMemo(buildLayer3Mat, []);
 
+  // Layer 3 tactile top-cap materials — deeper polygonOffset (−8)
+  // than Layer 2's caps so Layer 3's stack sorts above Layer 2's.
+  const buildLayer3TactileCapMat = () =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: VARNISH_ROUGHNESS,
+      clearcoat: VARNISH_CLEARCOAT,
+      clearcoatRoughness: VARNISH_CLEARCOAT_ROUGHNESS,
+      bumpScale: VARNISH_BUMP_SCALE,
+      opacity: TACTILE_CAP_OPACITY,
+      transparent: true,
+      alphaTest: 0.01,
+      side: THREE.FrontSide,
+      envMapIntensity: LABEL_ENV_BASE,
+      polygonOffset: true,
+      polygonOffsetFactor: -8,
+      polygonOffsetUnits: -8,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3FrontTactileCapMat = useMemo(buildLayer3TactileCapMat, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3BackTactileCapMat = useMemo(buildLayer3TactileCapMat, []);
+
+  useEffect(() => {
+    layer3FrontTactileCapMat.alphaMap = layer3FrontBumpTex;
+    layer3FrontTactileCapMat.bumpMap = layer3FrontBumpTex;
+    layer3FrontTactileCapMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3FrontTactileCapMat.needsUpdate = true;
+  }, [layer3FrontBumpTex, envIntensityScale, uvEnvMult, layer3FrontTactileCapMat]);
+
+  useEffect(() => {
+    layer3BackTactileCapMat.alphaMap = layer3BackBumpTex;
+    layer3BackTactileCapMat.bumpMap = layer3BackBumpTex;
+    layer3BackTactileCapMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3BackTactileCapMat.needsUpdate = true;
+  }, [layer3BackBumpTex, envIntensityScale, uvEnvMult, layer3BackTactileCapMat]);
+
   useEffect(() => {
     layer3FrontMat.map = layer3FrontTex;
     layer3FrontMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (layer3Varnish) {
+    if (layer3Varnish || layer3Tactile) {
       layer3FrontMat.metalness = 0;
       layer3FrontMat.roughness = VARNISH_ROUGHNESS;
       layer3FrontMat.clearcoat = VARNISH_CLEARCOAT;
@@ -878,12 +990,12 @@ export default function BagMesh({
       layer3FrontMat.emissiveIntensity = 1;
     }
     layer3FrontMat.needsUpdate = true;
-  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, uvEnvMult, layer3FrontMat, layer3UV, lighting]);
+  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, uvEnvMult, layer3FrontMat, layer3UV, lighting]);
 
   useEffect(() => {
     layer3BackMat.map = layer3BackTex;
     layer3BackMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (layer3Varnish) {
+    if (layer3Varnish || layer3Tactile) {
       layer3BackMat.metalness = 0;
       layer3BackMat.roughness = VARNISH_ROUGHNESS;
       layer3BackMat.clearcoat = VARNISH_CLEARCOAT;
@@ -908,7 +1020,7 @@ export default function BagMesh({
       layer3BackMat.emissiveIntensity = 1;
     }
     layer3BackMat.needsUpdate = true;
-  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, uvEnvMult, layer3BackMat, layer3UV, lighting]);
+  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, uvEnvMult, layer3BackMat, layer3UV, lighting]);
 
   // ── Material-mode masked variants (Layer 2 + Layer 3, front + back) ──────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
@@ -1232,7 +1344,10 @@ export default function BagMesh({
            artwork's alpha cuts out the current base finish (foil / prismatic
            / multi-chrome / matte / …) instead of painting the PNG's RGB
            directly. With Material OFF it's a standard transparent artwork
-           decal (Varnish optionally adds a clear-gloss overprint). */}
+           decal (Varnish optionally adds a clear-gloss overprint). When
+           Tactile is ON the artwork itself stays flat on the panel — the
+           raised look comes from the clear-varnish shell stack rendered
+           right after this mesh. */}
       {frontLabelGeo && frontLabelTex && (
         <mesh
           geometry={frontLabelGeo}
@@ -1248,6 +1363,36 @@ export default function BagMesh({
         />
       )}
 
+      {/* Layer 2 tactile — three extra copies of the varnish-styled
+           artwork mesh, barely offset along the panel normal. The top
+           copy (last offset) swaps to a transparent-white cap
+           material so the varnish reads as a clear gloss layer over
+           the printed artwork instead of re-painting the colours. */}
+      {labelTactile && frontLabelGeo && frontLabelTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+        const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
+        return (
+          <mesh
+            key={`l2f-tactile-${i}`}
+            geometry={frontLabelGeo}
+            material={isCap ? frontTactileCapMat : frontLabelMat}
+            position={[0, 0, z]}
+            renderOrder={2 + i}
+          />
+        );
+      })}
+      {labelTactile && backLabelGeo && backLabelTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+        const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
+        return (
+          <mesh
+            key={`l2b-tactile-${i}`}
+            geometry={backLabelGeo}
+            material={isCap ? backTactileCapMat : backLabelMat}
+            position={[0, 0, -z]}
+            renderOrder={2 + i}
+          />
+        );
+      })}
+
       {/* Layer 3 — optional second artwork layer. Same rules as Layer 2 but
            rendered one polygon-offset step deeper so it sits on top when
            the two layers overlap. */}
@@ -1255,16 +1400,45 @@ export default function BagMesh({
         <mesh
           geometry={frontLabelGeo}
           material={layer3Material ? layer3FrontMasked : layer3FrontMat}
-          renderOrder={2}
+          renderOrder={4}
         />
       )}
       {backLabelGeo && layer3BackTex && (
         <mesh
           geometry={backLabelGeo}
           material={layer3Material ? layer3BackMasked : layer3BackMat}
-          renderOrder={2}
+          renderOrder={4}
         />
       )}
+
+      {/* Layer 3 tactile — same treatment as Layer 2: three extra
+           varnish copies at tiny offsets, with the topmost using the
+           transparent-cap material. Offsets are slightly larger here
+           so Layer 3's stack sits above Layer 2's if both are on. */}
+      {layer3Tactile && frontLabelGeo && layer3FrontTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+        const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
+        return (
+          <mesh
+            key={`l3f-tactile-${i}`}
+            geometry={frontLabelGeo}
+            material={isCap ? layer3FrontTactileCapMat : layer3FrontMat}
+            position={[0, 0, z * 1.3]}
+            renderOrder={5 + i}
+          />
+        );
+      })}
+      {layer3Tactile && backLabelGeo && layer3BackTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+        const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
+        return (
+          <mesh
+            key={`l3b-tactile-${i}`}
+            geometry={backLabelGeo}
+            material={isCap ? layer3BackTactileCapMat : layer3BackMat}
+            position={[0, 0, -z * 1.3]}
+            renderOrder={5 + i}
+          />
+        );
+      })}
     </group>
   );
 }
