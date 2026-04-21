@@ -109,20 +109,32 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
-// Tactile tuning — stronger bump than varnish, softer shine (semi-gloss
-// rather than mirror clearcoat), plus a small physical z-offset applied
-// to the decal mesh in the JSX so the layer sits *above* varnish/plain
-// layers that share the same panel geometry. Mimics the feel of raised
-// UV print / soft-touch spot coating.
-const TACTILE_BUMP_SCALE = 0.022;
-const TACTILE_CLEARCOAT = 0.55;
-const TACTILE_CLEARCOAT_ROUGHNESS = 0.32;
-const TACTILE_ROUGHNESS = 0.45;
-/** Local-space raise along the panel normal. The group is scaled 5.5× so
- *  0.003 → ~0.0165 world units — enough to read as thickness at grazing
- *  angles without looking detached from the bag surface. Front panels
- *  use +Z, back panels −Z (see centroid-Z filter above). */
-const TACTILE_Z_OFFSET = 0.003;
+// Tactile tuning — models a clear, raised UV-print varnish over the
+// artwork. Implementation: the artwork mesh stays flat on the panel,
+// and a stack of clear-glass shells sits above it, each masked by the
+// artwork's alpha so the shells only appear where the art is. From
+// grazing angles the stacked shell silhouettes read as a solid volume
+// of varnish — without displacing the artwork itself (which would open
+// a see-through gap behind the decal).
+/** Number of clear-varnish shells stacked per tactile layer per side.
+ *  More shells → smoother "solid" silhouette at oblique angles but
+ *  more draw calls. 6 is the sweet spot: side profile reads solid and
+ *  the 4-mesh-per-layer cost is modest. */
+const TACTILE_SHELL_COUNT = 6;
+/** Total raise of the topmost shell above the panel, in group-local
+ *  units (the group is scaled 5.5×). Intentionally subtle — enough to
+ *  register as physical thickness under rotation but small enough that
+ *  the varnish doesn't float off the bag. Front panels stack +Z, back
+ *  panels −Z. */
+const TACTILE_TOTAL_RAISE = 0.0018;
+/** Per-shell clear-varnish material properties. Low opacity + full
+ *  clearcoat + low roughness gives the "wet UV" look — you see the
+ *  printed artwork clearly through the varnish, with a glossy top
+ *  reflection. */
+const TACTILE_SHELL_OPACITY = 0.18;
+const TACTILE_SHELL_ROUGHNESS = 0.1;
+const TACTILE_SHELL_CLEARCOAT = 1.0;
+const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.05;
 
 /** Builds a greyscale CanvasTexture whose pixel brightness equals the source
  *  texture's alpha channel, so it can be plugged straight into MeshPhysical
@@ -729,6 +741,37 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const backLabelMat = useMemo(buildLabelMat, []);
 
+  // Tactile shell material — clear glossy varnish, shared across all shells
+  // of a given side. `map` stays null (we want clear, not tinted). The
+  // shell's silhouette comes from alphaMap (bound to the artwork's alpha)
+  // so the puck matches the artwork footprint exactly. alphaTest is set
+  // just above zero so the shell renders only on opaque pixels — avoids
+  // ghosting over the bag surface where the artwork is fully transparent.
+  const buildTactileShellMat = () =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: TACTILE_SHELL_ROUGHNESS,
+      clearcoat: TACTILE_SHELL_CLEARCOAT,
+      clearcoatRoughness: TACTILE_SHELL_CLEARCOAT_ROUGHNESS,
+      opacity: TACTILE_SHELL_OPACITY,
+      transparent: true,
+      alphaTest: 0.02,
+      side: THREE.FrontSide,
+      envMapIntensity: LABEL_ENV_BASE,
+      polygonOffset: true,
+      // Higher polygon offset bias than the artwork (which is -4) so
+      // shells always sort above the artwork decal regardless of the
+      // (tiny) z-offset, no z-fighting even when the stack is nearly
+      // flush to the artwork.
+      polygonOffsetFactor: -12,
+      polygonOffsetUnits: -12,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const frontTactileShellMat = useMemo(buildTactileShellMat, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const backTactileShellMat = useMemo(buildTactileShellMat, []);
+
   // Alpha-derived bump maps — regenerated whenever the artwork changes. Kept
   // in state so the useEffect that applies them to the material can dispose
   // stale textures cleanly.
@@ -749,20 +792,47 @@ export default function BagMesh({
     return () => { tex?.dispose(); };
   }, [backLabelTex]);
 
+  // Reuse the alpha-bump texture (brightness == artwork alpha) as the
+  // shell material's alphaMap — three.js samples .g on alphaMap so the
+  // bump tex works unmodified. Null it out when the artwork is gone so
+  // the stale silhouette doesn't linger.
+  useEffect(() => {
+    frontTactileShellMat.alphaMap = frontBumpTex;
+    frontTactileShellMat.needsUpdate = true;
+  }, [frontBumpTex, frontTactileShellMat]);
+
+  useEffect(() => {
+    backTactileShellMat.alphaMap = backBumpTex;
+    backTactileShellMat.needsUpdate = true;
+  }, [backBumpTex, backTactileShellMat]);
+
+  // envMapIntensity on shells tracks the scene dim and UV dampening so
+  // tactile stays consistent when the user slides the HDRI down or
+  // switches to UV mode (where we kill reflections almost entirely).
+  useEffect(() => {
+    frontTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    backTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    frontTactileShellMat.needsUpdate = true;
+    backTactileShellMat.needsUpdate = true;
+  }, [envIntensityScale, uvEnvMult, frontTactileShellMat, backTactileShellMat]);
+
   useEffect(() => {
     frontLabelMat.map = frontLabelTex;
     frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    // Precedence: tactile > varnish > plain. Tactile pairs with a physical
-    // z-offset on the mesh itself (see JSX below) so the raised look reads
-    // as real thickness, not just shading. Varnish is the legacy glossy
-    // overprint. Plain uses the user's per-layer metalness/roughness.
+    // Precedence: tactile > varnish > plain.
+    // Tactile: the artwork itself stays MATTE — all the shine/thickness
+    // lives in the clear-varnish shell stack rendered above (see JSX).
+    // The artwork shows through those clear shells like a printed label
+    // under a UV varnish spot-coat.
+    // Varnish: legacy glossy overprint baked into the artwork material.
+    // Plain: uses the user's per-layer metalness/roughness.
     if (labelTactile) {
       frontLabelMat.metalness = 0;
-      frontLabelMat.roughness = TACTILE_ROUGHNESS;
-      frontLabelMat.clearcoat = TACTILE_CLEARCOAT;
-      frontLabelMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
-      frontLabelMat.bumpMap = frontBumpTex;
-      frontLabelMat.bumpScale = TACTILE_BUMP_SCALE;
+      frontLabelMat.roughness = 0.7;
+      frontLabelMat.clearcoat = 0;
+      frontLabelMat.clearcoatRoughness = 0;
+      frontLabelMat.bumpMap = null;
+      frontLabelMat.bumpScale = 0;
     } else if (labelVarnish) {
       frontLabelMat.metalness = 0;
       frontLabelMat.roughness = VARNISH_ROUGHNESS;
@@ -799,11 +869,11 @@ export default function BagMesh({
     backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (labelTactile) {
       backLabelMat.metalness = 0;
-      backLabelMat.roughness = TACTILE_ROUGHNESS;
-      backLabelMat.clearcoat = TACTILE_CLEARCOAT;
-      backLabelMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
-      backLabelMat.bumpMap = backBumpTex;
-      backLabelMat.bumpScale = TACTILE_BUMP_SCALE;
+      backLabelMat.roughness = 0.7;
+      backLabelMat.clearcoat = 0;
+      backLabelMat.clearcoatRoughness = 0;
+      backLabelMat.bumpMap = null;
+      backLabelMat.bumpScale = 0;
     } else if (labelVarnish) {
       backLabelMat.metalness = 0;
       backLabelMat.roughness = VARNISH_ROUGHNESS;
@@ -893,16 +963,57 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer3BackMat = useMemo(buildLayer3Mat, []);
 
+  // Layer 3 tactile shell materials — same clear-varnish setup as Layer 2
+  // but with deeper polygonOffset to stay above Layer 2's artwork and
+  // (if active) Layer 2's tactile stack.
+  const buildLayer3TactileShellMat = () =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: TACTILE_SHELL_ROUGHNESS,
+      clearcoat: TACTILE_SHELL_CLEARCOAT,
+      clearcoatRoughness: TACTILE_SHELL_CLEARCOAT_ROUGHNESS,
+      opacity: TACTILE_SHELL_OPACITY,
+      transparent: true,
+      alphaTest: 0.02,
+      side: THREE.FrontSide,
+      envMapIntensity: LABEL_ENV_BASE,
+      polygonOffset: true,
+      polygonOffsetFactor: -16,
+      polygonOffsetUnits: -16,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3FrontTactileShellMat = useMemo(buildLayer3TactileShellMat, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3BackTactileShellMat = useMemo(buildLayer3TactileShellMat, []);
+
+  useEffect(() => {
+    layer3FrontTactileShellMat.alphaMap = layer3FrontBumpTex;
+    layer3FrontTactileShellMat.needsUpdate = true;
+  }, [layer3FrontBumpTex, layer3FrontTactileShellMat]);
+
+  useEffect(() => {
+    layer3BackTactileShellMat.alphaMap = layer3BackBumpTex;
+    layer3BackTactileShellMat.needsUpdate = true;
+  }, [layer3BackBumpTex, layer3BackTactileShellMat]);
+
+  useEffect(() => {
+    layer3FrontTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3BackTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3FrontTactileShellMat.needsUpdate = true;
+    layer3BackTactileShellMat.needsUpdate = true;
+  }, [envIntensityScale, uvEnvMult, layer3FrontTactileShellMat, layer3BackTactileShellMat]);
+
   useEffect(() => {
     layer3FrontMat.map = layer3FrontTex;
     layer3FrontMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (layer3Tactile) {
       layer3FrontMat.metalness = 0;
-      layer3FrontMat.roughness = TACTILE_ROUGHNESS;
-      layer3FrontMat.clearcoat = TACTILE_CLEARCOAT;
-      layer3FrontMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
-      layer3FrontMat.bumpMap = layer3FrontBumpTex;
-      layer3FrontMat.bumpScale = TACTILE_BUMP_SCALE;
+      layer3FrontMat.roughness = 0.7;
+      layer3FrontMat.clearcoat = 0;
+      layer3FrontMat.clearcoatRoughness = 0;
+      layer3FrontMat.bumpMap = null;
+      layer3FrontMat.bumpScale = 0;
     } else if (layer3Varnish) {
       layer3FrontMat.metalness = 0;
       layer3FrontMat.roughness = VARNISH_ROUGHNESS;
@@ -935,11 +1046,11 @@ export default function BagMesh({
     layer3BackMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
     if (layer3Tactile) {
       layer3BackMat.metalness = 0;
-      layer3BackMat.roughness = TACTILE_ROUGHNESS;
-      layer3BackMat.clearcoat = TACTILE_CLEARCOAT;
-      layer3BackMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
-      layer3BackMat.bumpMap = layer3BackBumpTex;
-      layer3BackMat.bumpScale = TACTILE_BUMP_SCALE;
+      layer3BackMat.roughness = 0.7;
+      layer3BackMat.clearcoat = 0;
+      layer3BackMat.clearcoatRoughness = 0;
+      layer3BackMat.bumpMap = null;
+      layer3BackMat.bumpScale = 0;
     } else if (layer3Varnish) {
       layer3BackMat.metalness = 0;
       layer3BackMat.roughness = VARNISH_ROUGHNESS;
@@ -1289,15 +1400,15 @@ export default function BagMesh({
            artwork's alpha cuts out the current base finish (foil / prismatic
            / multi-chrome / matte / …) instead of painting the PNG's RGB
            directly. With Material OFF it's a standard transparent artwork
-           decal (Varnish optionally adds a clear-gloss overprint; Tactile
-           adds a semi-gloss overprint AND physically nudges the mesh
-           outward along the panel normal so the layer reads as raised). */}
+           decal (Varnish optionally adds a clear-gloss overprint). When
+           Tactile is ON the artwork itself stays flat on the panel — the
+           raised look comes from the clear-varnish shell stack rendered
+           right after this mesh. */}
       {frontLabelGeo && frontLabelTex && (
         <mesh
           geometry={frontLabelGeo}
           material={labelMaterial ? layer2FrontMasked : frontLabelMat}
           renderOrder={1}
-          position={labelTactile ? [0, 0, TACTILE_Z_OFFSET] : [0, 0, 0]}
         />
       )}
       {backLabelGeo && backLabelTex && (
@@ -1305,21 +1416,57 @@ export default function BagMesh({
           geometry={backLabelGeo}
           material={labelMaterial ? layer2BackMasked : backLabelMat}
           renderOrder={1}
-          position={labelTactile ? [0, 0, -TACTILE_Z_OFFSET] : [0, 0, 0]}
         />
+      )}
+
+      {/* Layer 2 tactile shells — rendered only when tactile is on. Each
+           shell is the artwork geometry positioned slightly outward along
+           the panel normal, sharing one clear-glass material masked by the
+           artwork's alpha. Stacking enough of them makes the combined
+           silhouette look like a solid raised varnish volume from grazing
+           angles. Shells ascend in renderOrder so the outermost draws last
+           (correct back-to-front blend). */}
+      {labelTactile && frontLabelGeo && frontLabelTex && frontBumpTex && (
+        <>
+          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
+            const z = (TACTILE_TOTAL_RAISE * (i + 1)) / TACTILE_SHELL_COUNT;
+            return (
+              <mesh
+                key={`l2f-tactile-${i}`}
+                geometry={frontLabelGeo}
+                material={frontTactileShellMat}
+                position={[0, 0, z]}
+                renderOrder={10 + i}
+              />
+            );
+          })}
+        </>
+      )}
+      {labelTactile && backLabelGeo && backLabelTex && backBumpTex && (
+        <>
+          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
+            const z = -(TACTILE_TOTAL_RAISE * (i + 1)) / TACTILE_SHELL_COUNT;
+            return (
+              <mesh
+                key={`l2b-tactile-${i}`}
+                geometry={backLabelGeo}
+                material={backTactileShellMat}
+                position={[0, 0, z]}
+                renderOrder={10 + i}
+              />
+            );
+          })}
+        </>
       )}
 
       {/* Layer 3 — optional second artwork layer. Same rules as Layer 2 but
            rendered one polygon-offset step deeper so it sits on top when
-           the two layers overlap. Tactile uses a slightly larger z-offset
-           than Layer 2 tactile so stacked-tactile layers still read in
-           order. */}
+           the two layers overlap. */}
       {frontLabelGeo && layer3FrontTex && (
         <mesh
           geometry={frontLabelGeo}
           material={layer3Material ? layer3FrontMasked : layer3FrontMat}
           renderOrder={2}
-          position={layer3Tactile ? [0, 0, TACTILE_Z_OFFSET * 1.3] : [0, 0, 0]}
         />
       )}
       {backLabelGeo && layer3BackTex && (
@@ -1327,8 +1474,43 @@ export default function BagMesh({
           geometry={backLabelGeo}
           material={layer3Material ? layer3BackMasked : layer3BackMat}
           renderOrder={2}
-          position={layer3Tactile ? [0, 0, -TACTILE_Z_OFFSET * 1.3] : [0, 0, 0]}
         />
+      )}
+
+      {/* Layer 3 tactile shells — same construction as Layer 2's but
+           stacked slightly higher so overlapping tactile layers still
+           read in order (Layer 3 sits visibly above Layer 2's stack). */}
+      {layer3Tactile && frontLabelGeo && layer3FrontTex && layer3FrontBumpTex && (
+        <>
+          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
+            const z = (TACTILE_TOTAL_RAISE * 1.3 * (i + 1)) / TACTILE_SHELL_COUNT;
+            return (
+              <mesh
+                key={`l3f-tactile-${i}`}
+                geometry={frontLabelGeo}
+                material={layer3FrontTactileShellMat}
+                position={[0, 0, z]}
+                renderOrder={20 + i}
+              />
+            );
+          })}
+        </>
+      )}
+      {layer3Tactile && backLabelGeo && layer3BackTex && layer3BackBumpTex && (
+        <>
+          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
+            const z = -(TACTILE_TOTAL_RAISE * 1.3 * (i + 1)) / TACTILE_SHELL_COUNT;
+            return (
+              <mesh
+                key={`l3b-tactile-${i}`}
+                geometry={backLabelGeo}
+                material={layer3BackTactileShellMat}
+                position={[0, 0, z]}
+                renderOrder={20 + i}
+              />
+            );
+          })}
+        </>
       )}
     </group>
   );

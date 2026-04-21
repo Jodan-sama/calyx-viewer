@@ -38,22 +38,24 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
-// Tactile tuning — matches BagMesh. Semi-gloss surface + stronger bump;
-// the JSX raises the decal mesh radially via a small scale bump so the
-// label wraps the jar slightly outward, reading as thickness.
-const TACTILE_BUMP_SCALE = 0.022;
-const TACTILE_CLEARCOAT = 0.55;
-const TACTILE_CLEARCOAT_ROUGHNESS = 0.32;
-const TACTILE_ROUGHNESS = 0.45;
-/** Uniform scale multiplier for the label mesh when Tactile is on. The
- *  label geometry wraps a cylinder so there is no single "outward" axis
- *  — scaling pushes every vertex outward from the jar's local origin,
- *  which is close enough to radial to read as raised thickness. 1.004
- *  ≈ 0.4% expansion (a fraction of a millimetre at final size). */
-const TACTILE_JAR_SCALE = 1.004;
-/** Layer 3's extra bump on top of Layer 2, so stacked-tactile still reads
- *  in order without the two layers sharing a depth slice. */
-const TACTILE_JAR_SCALE_LAYER3 = 1.006;
+// Tactile tuning — matches BagMesh. The artwork itself stays flat
+// against the jar; the raised look comes from a stack of clear-varnish
+// shells rendered above it, masked by the artwork's alpha. On the jar
+// the shells "raise" via a small uniform scale bump (radial outward)
+// since the label wraps a cylinder and there is no single outward axis.
+const TACTILE_SHELL_COUNT = 6;
+/** Total outward scale of the topmost shell (1 = no raise). Keep this
+ *  tight — the jar label is already close to the cap/lid geometry, and
+ *  too much expansion pushes the varnish outside the jar silhouette.
+ *  0.004 ≈ 0.4% expansion. */
+const TACTILE_SHELL_MAX_SCALE = 1.004;
+/** Layer 3's max scale — slightly more than Layer 2 so stacked-tactile
+ *  layers still read in order. */
+const TACTILE_SHELL_MAX_SCALE_LAYER3 = 1.006;
+const TACTILE_SHELL_OPACITY = 0.18;
+const TACTILE_SHELL_ROUGHNESS = 0.1;
+const TACTILE_SHELL_CLEARCOAT = 1.0;
+const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.05;
 
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
@@ -612,6 +614,33 @@ export default function SupplementJarMesh({
   const layer2Mat = useMemo(() => makeDecalMat(-4), []);
   const layer3Mat = useMemo(() => makeDecalMat(-8), []);
 
+  // Tactile shell materials — clear-varnish glass rendered above the
+  // artwork decal when Tactile is on. alphaMap tracks the artwork's
+  // alpha (bound in a useEffect further down) so the shell silhouette
+  // matches the artwork footprint. polygonOffset is deep enough to
+  // keep the stack above the artwork regardless of the (small) scale
+  // bump used for the radial raise.
+  const makeTactileShellMat = (offset: number) =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: TACTILE_SHELL_ROUGHNESS,
+      clearcoat: TACTILE_SHELL_CLEARCOAT,
+      clearcoatRoughness: TACTILE_SHELL_CLEARCOAT_ROUGHNESS,
+      opacity: TACTILE_SHELL_OPACITY,
+      transparent: true,
+      alphaTest: 0.02,
+      side: THREE.FrontSide,
+      envMapIntensity: DECAL_ENV_BASE,
+      polygonOffset: true,
+      polygonOffsetFactor: offset,
+      polygonOffsetUnits: offset,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer2TactileShellMat = useMemo(() => makeTactileShellMat(-12), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3TactileShellMat = useMemo(() => makeTactileShellMat(-16), []);
+
   // ── Material-mode masked variants (Layer 2 + Layer 3) ────────────────────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
   // cutout mask and the revealed pixels paint with the current Layer 1
@@ -782,22 +811,43 @@ export default function SupplementJarMesh({
     return () => { tex?.dispose(); };
   }, [layer3Tex]);
 
+  // Reuse alpha-bump textures as the tactile shell's alphaMap (three.js
+  // samples .g on alphaMap; the bump tex has .g == artwork alpha).
+  useEffect(() => {
+    layer2TactileShellMat.alphaMap = layer2BumpTex;
+    layer2TactileShellMat.needsUpdate = true;
+  }, [layer2BumpTex, layer2TactileShellMat]);
+
+  useEffect(() => {
+    layer3TactileShellMat.alphaMap = layer3BumpTex;
+    layer3TactileShellMat.needsUpdate = true;
+  }, [layer3BumpTex, layer3TactileShellMat]);
+
+  // Track scene dim / UV dampening on shell materials so they stay in
+  // sync with the rest of the decal stack.
+  useEffect(() => {
+    layer2TactileShellMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3TactileShellMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer2TactileShellMat.needsUpdate = true;
+    layer3TactileShellMat.needsUpdate = true;
+  }, [envIntensityScale, uvEnvMult, layer2TactileShellMat, layer3TactileShellMat]);
+
   // Layer 2 artwork material — always artwork mode. Varnish overrides to a
   // glossy clearcoat overprint with a subtle alpha-derived bump. This
   // material only renders when the Material checkbox is OFF; when Material
   // is ON the mesh picks up `layer2Masked` instead.
   useEffect(() => {
     layer2Mat.map = layer2Tex;
-    // Precedence: tactile > varnish > plain. Tactile is paired with a
-    // small radial scale bump on the mesh (see JSX) so the raised look
-    // reads as thickness, not just shading.
+    // Precedence: tactile > varnish > plain.
+    // Tactile: the artwork stays matte — shine + thickness live in the
+    // clear-varnish shell stack rendered above (see JSX).
     if (layer2Tactile) {
       layer2Mat.metalness = 0;
-      layer2Mat.roughness = TACTILE_ROUGHNESS;
-      layer2Mat.clearcoat = TACTILE_CLEARCOAT;
-      layer2Mat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
-      layer2Mat.bumpMap = layer2BumpTex;
-      layer2Mat.bumpScale = TACTILE_BUMP_SCALE;
+      layer2Mat.roughness = 0.7;
+      layer2Mat.clearcoat = 0;
+      layer2Mat.clearcoatRoughness = 0;
+      layer2Mat.bumpMap = null;
+      layer2Mat.bumpScale = 0;
     } else if (layer2Varnish) {
       layer2Mat.metalness = 0;
       layer2Mat.roughness = VARNISH_ROUGHNESS;
@@ -983,11 +1033,11 @@ export default function SupplementJarMesh({
     layer3Mat.map = layer3Tex;
     if (layer3Tactile) {
       layer3Mat.metalness = 0;
-      layer3Mat.roughness = TACTILE_ROUGHNESS;
-      layer3Mat.clearcoat = TACTILE_CLEARCOAT;
-      layer3Mat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
-      layer3Mat.bumpMap = layer3BumpTex;
-      layer3Mat.bumpScale = TACTILE_BUMP_SCALE;
+      layer3Mat.roughness = 0.7;
+      layer3Mat.clearcoat = 0;
+      layer3Mat.clearcoatRoughness = 0;
+      layer3Mat.bumpMap = null;
+      layer3Mat.bumpScale = 0;
     } else if (layer3Varnish) {
       layer3Mat.metalness = 0;
       layer3Mat.roughness = VARNISH_ROUGHNESS;
@@ -1208,34 +1258,67 @@ export default function SupplementJarMesh({
            cuts out the current Layer 1 finish (foil/prismatic/chrome/
            matte/…) instead of painting the artwork pixels themselves. With
            Material OFF it's a standard transparent artwork decal (Varnish
-           optionally applies a clearcoat overprint; Tactile applies a
-           semi-gloss overprint AND a small radial scale bump so the label
-           wraps slightly outward — it reads as physical thickness at
-           grazing angles). */}
+           optionally applies a clearcoat overprint). Tactile keeps the
+           artwork flat and adds the clear-varnish shell stack below. */}
       {layer2Tex && (
         <mesh
           geometry={labelGeo}
           material={layer2Material ? layer2Masked : layer2Mat}
           renderOrder={1}
-          scale={layer2Tactile
-            ? [TACTILE_JAR_SCALE, TACTILE_JAR_SCALE, TACTILE_JAR_SCALE]
-            : [1, 1, 1]}
         />
       )}
 
+      {/* Layer 2 tactile shells — clear-varnish stack, radial raise. Each
+           shell is the same cylinder-wrapped label mesh scaled a hair
+           outward from the jar's origin, sharing one alphaMapped
+           clear-glass material. The stack reads as a solid raised
+           varnish puck over the artwork. */}
+      {layer2Tactile && layer2Tex && layer2BumpTex && (
+        <>
+          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
+            const t = (i + 1) / TACTILE_SHELL_COUNT;
+            const s = 1 + (TACTILE_SHELL_MAX_SCALE - 1) * t;
+            return (
+              <mesh
+                key={`jar-l2-tactile-${i}`}
+                geometry={labelGeo}
+                material={layer2TactileShellMat}
+                scale={[s, s, s]}
+                renderOrder={10 + i}
+              />
+            );
+          })}
+        </>
+      )}
+
       {/* Layer 3 — same behavior as Layer 2, one render order higher so it
-           always reads on top when overlapping. Tactile here scales a
-           touch more than Layer 2 tactile so stacked-tactile layers
-           still read in order. */}
+           always reads on top when overlapping. */}
       {layer3Tex && (
         <mesh
           geometry={labelGeo}
           material={layer3Material ? layer3Masked : layer3Mat}
           renderOrder={3}
-          scale={layer3Tactile
-            ? [TACTILE_JAR_SCALE_LAYER3, TACTILE_JAR_SCALE_LAYER3, TACTILE_JAR_SCALE_LAYER3]
-            : [1, 1, 1]}
         />
+      )}
+
+      {/* Layer 3 tactile shells — scaled a touch more than Layer 2's
+           tactile so overlapping tactile layers still read in order. */}
+      {layer3Tactile && layer3Tex && layer3BumpTex && (
+        <>
+          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
+            const t = (i + 1) / TACTILE_SHELL_COUNT;
+            const s = 1 + (TACTILE_SHELL_MAX_SCALE_LAYER3 - 1) * t;
+            return (
+              <mesh
+                key={`jar-l3-tactile-${i}`}
+                geometry={labelGeo}
+                material={layer3TactileShellMat}
+                scale={[s, s, s]}
+                renderOrder={20 + i}
+              />
+            );
+          })}
+        </>
       )}
     </group>
   );
