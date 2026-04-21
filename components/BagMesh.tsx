@@ -7,6 +7,14 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
+import {
+  applyMosaicCrop,
+  buildArtworkAlphaMap,
+  buildMirroredSourceTexture,
+  cloneMosaicTexture,
+  loadMosaicTexture,
+  resolveMosaicCrop,
+} from "@/lib/mosaicTexture";
 
 interface BagMeshProps {
   // ── Base surface (mylar / foil / multi-chrome / custom) ─────────────────
@@ -84,6 +92,33 @@ interface BagMeshProps {
   labelUV?: boolean;
   /** Same as `labelUV` but for the stacked Layer 3 decal. */
   layer3UV?: boolean;
+
+  /** Mosaic finish — source image shared by every layer set to
+   *  finish === "mosaic". Null → mosaic layers skip rendering (fall
+   *  through to a neutral placeholder material). */
+  mosaicSourceUrl?: string | null;
+  /** Mirror the source along its vertical centre before any layer
+   *  samples from it — shared across every mosaic layer. */
+  mosaicMirror?: boolean;
+  /** Crop zoom 0–1. 1 = full-fit aspect-correct crop of the source;
+   *  smaller values zoom in and surface finer detail. Shared across
+   *  layers so a single slider drives the whole design. */
+  mosaicZoom?: number;
+  /** Layer 1 mosaic crop seed (normalised 0–1 pair) + flip X/Y toggles. */
+  mosaicOffsetU?: number;
+  mosaicOffsetV?: number;
+  mosaicFlipX?: boolean;
+  mosaicFlipY?: boolean;
+  /** Bag Layer 2 mosaic crop seed + flip X/Y toggles. */
+  labelMosaicOffsetU?: number;
+  labelMosaicOffsetV?: number;
+  labelMosaicFlipX?: boolean;
+  labelMosaicFlipY?: boolean;
+  /** Bag Layer 3 mosaic crop seed + flip X/Y toggles. */
+  layer3MosaicOffsetU?: number;
+  layer3MosaicOffsetV?: number;
+  layer3MosaicFlipX?: boolean;
+  layer3MosaicFlipY?: boolean;
 }
 
 // Base env-map intensities per material — the scale prop multiplies into these.
@@ -338,6 +373,12 @@ function buildLabelGeo(
   }
   uvAttr.needsUpdate = true;
 
+  // Stash the physical aspect ratio on the geometry for the mosaic
+  // material to read. UVs run 0–1 over the bounding rectangle, so a
+  // square source crop would squash to the panel's aspect; the mosaic
+  // shader compensates by setting repeat.x/repeat.y to match.
+  geo.userData.panelAspect = yRange > 0 ? xRange / yRange : 1;
+
   return geo;
 }
 
@@ -410,6 +451,21 @@ export default function BagMesh({
   layer3UV = false,
   envIntensityScale = 1,
   floating = true,
+  mosaicSourceUrl = null,
+  mosaicMirror = false,
+  mosaicZoom = 1,
+  mosaicOffsetU = 0,
+  mosaicOffsetV = 0,
+  mosaicFlipX = false,
+  mosaicFlipY = false,
+  labelMosaicOffsetU = 0,
+  labelMosaicOffsetV = 0,
+  labelMosaicFlipX = false,
+  labelMosaicFlipY = false,
+  layer3MosaicOffsetU = 0,
+  layer3MosaicOffsetV = 0,
+  layer3MosaicFlipX = false,
+  layer3MosaicFlipY = false,
 }: BagMeshProps) {
   // ── Refs ───────────────────────────────────────────────────────────────────
   const groupRef = useRef<THREE.Group>(null);
@@ -555,6 +611,50 @@ export default function BagMesh({
   const frontLabelTex = frontTex;
   const backLabelTex = backTex;
 
+  // ── Label geometry state (front + back, rebuilt on decalDirty) ───────────
+  // Declared up-front so mosaic sync effects can read the per-panel aspect
+  // off `geo.userData.panelAspect` without a TDZ crash. The actual rebuild
+  // useFrame lives further down alongside the float animation.
+  const [frontLabelGeo, setFrontLabelGeo] = useState<THREE.BufferGeometry | null>(null);
+  const [backLabelGeo, setBackLabelGeo] = useState<THREE.BufferGeometry | null>(null);
+  useEffect(() => () => { frontLabelGeo?.dispose(); }, [frontLabelGeo]);
+  useEffect(() => () => { backLabelGeo?.dispose(); }, [backLabelGeo]);
+
+  // ── Mosaic source texture ─────────────────────────────────────────────────
+  // Shared by every layer whose finish is "mosaic". Each consuming material
+  // gets its own Texture clone (see the masked set build) so offset/repeat
+  // don't stomp each other across layers/panels.
+  //
+  // `rawMosaicTex` is the user's uploaded image verbatim; `mosaicSourceTex`
+  // is what the layers actually sample from — either the raw texture or a
+  // centre-mirrored canvas derived from it (when the Mirror toggle is on).
+  // Splitting the two lets us toggle Mirror without re-fetching the
+  // upload: we keep the raw bytes and regenerate the mirrored canvas
+  // cheaply when the flag flips.
+  const [rawMosaicTex, setRawMosaicTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!mosaicSourceUrl) { setRawMosaicTex(null); return; }
+    const signal = { cancelled: false };
+    loadMosaicTexture(mosaicSourceUrl, signal).then((tex) => {
+      if (!signal.cancelled && tex) setRawMosaicTex(tex);
+    });
+    return () => { signal.cancelled = true; };
+  }, [mosaicSourceUrl]);
+
+  const [mosaicSourceTex, setMosaicSourceTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!rawMosaicTex) { setMosaicSourceTex(null); return; }
+    if (!mosaicMirror) { setMosaicSourceTex(rawMosaicTex); return; }
+    const mirrored = buildMirroredSourceTexture(rawMosaicTex);
+    if (mirrored) {
+      setMosaicSourceTex(mirrored);
+      return () => { mirrored.dispose(); };
+    }
+    // Mirror canvas failed (e.g. tainted image) — fall through to raw so
+    // the mosaic still renders rather than going blank.
+    setMosaicSourceTex(rawMosaicTex);
+  }, [rawMosaicTex, mosaicMirror]);
+
   // ── Bag scene + materials ──────────────────────────────────────────────────
   // The mylar-bag GLB ships with inconsistent vertex normals — front and
   // back panels point the same direction in stored data, so one panel ends
@@ -688,21 +788,67 @@ export default function BagMesh({
     []
   );
 
+  // ── Mosaic Layer 1 material (bag body) ───────────────────────────────────
+  // When finish === "mosaic", swap the bag body's material for this. The
+  // bag GLB ships with its own UVs (baked unwrap) so we pass aspect=null
+  // which maps a square crop into whatever the GLB dictates. Metalness /
+  // roughness come live from Leva (BagViewer routes them through the
+  // existing `metalness`/`roughness` props when finish is "mosaic", the
+  // same way it does for "custom"), so the user can dial the surface
+  // gloss without leaving the Mosaic finish.
+  const mosaicBagMat = useMemo(
+    () => new THREE.MeshPhysicalMaterial({
+      envMapIntensity: MYLAR_ENV_BASE,
+      side: THREE.DoubleSide,
+    }),
+    []
+  );
+  // Per-material Texture clone for Layer 1 mosaic so offset/repeat live
+  // on an object this material uniquely owns — critical because Texture
+  // UV transforms are stored on the Texture, not the material.
+  const [mosaicBagTex, setMosaicBagTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!mosaicSourceTex) { setMosaicBagTex(null); return; }
+    const clone = cloneMosaicTexture(mosaicSourceTex);
+    setMosaicBagTex(clone);
+    return () => { clone.dispose(); };
+  }, [mosaicSourceTex]);
+
+  useEffect(() => {
+    mosaicBagMat.map = mosaicBagTex;
+    mosaicBagMat.metalness = metalness;
+    mosaicBagMat.roughness = roughness;
+    mosaicBagMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale * uvEnvMult;
+    if (mosaicBagTex) {
+      applyMosaicCrop(mosaicBagTex, resolveMosaicCrop({
+        aspect: null,
+        zoom: mosaicZoom,
+        offsetU: mosaicOffsetU,
+        offsetV: mosaicOffsetV,
+        flipX: mosaicFlipX,
+        flipY: mosaicFlipY,
+      }));
+      mosaicBagTex.needsUpdate = true;
+    }
+    mosaicBagMat.needsUpdate = true;
+  }, [mosaicBagTex, mosaicZoom, mosaicOffsetU, mosaicOffsetV, mosaicFlipX, mosaicFlipY, metalness, roughness, envIntensityScale, uvEnvMult, mosaicBagMat]);
+
   useEffect(() => {
     bagScene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh) return;
-      if (lighting === "uv")           m.material = uvDarkMat;
+      if (lighting === "uv")                m.material = uvDarkMat;
       else if (finish === "debug-normals")  m.material = debugNormalMat;
-      else if (finish === "foil")      m.material = holographicFoilMat;
-      else if (finish === "prismatic") m.material = prismaticFoilMat;
-      else if (iridescence > 0)        m.material = multiChromeMat;
-      else                             m.material = mylarMat;
+      else if (finish === "foil")           m.material = holographicFoilMat;
+      else if (finish === "prismatic")      m.material = prismaticFoilMat;
+      else if (finish === "mosaic" && mosaicBagTex) m.material = mosaicBagMat;
+      else if (iridescence > 0)             m.material = multiChromeMat;
+      else                                  m.material = mylarMat;
       m.castShadow = true;
       m.receiveShadow = true;
       m.renderOrder = 0;
     });
-  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, debugNormalMat, uvDarkMat, iridescence, finish, lighting]);
+  }, [bagScene, mylarMat, multiChromeMat, holographicFoilMat, prismaticFoilMat, debugNormalMat, uvDarkMat, iridescence, finish, lighting, mosaicBagMat, mosaicBagTex]);
 
   // Mark label geo dirty when bag scene changes
   useEffect(() => { decalDirty.current = true; }, [bagScene]);
@@ -1040,6 +1186,11 @@ export default function BagMesh({
     foil: THREE.MeshPhysicalMaterial;
     prismatic: THREE.MeshPhysicalMaterial;
     chrome: THREE.MeshPhysicalMaterial;
+    /** "Mosaic" variant — map = mosaic source crop, alphaMap = artwork
+     *  alpha so the artwork's shape cuts out the mosaic colour. The
+     *  material's `.map` is assigned a per-set Texture clone in the
+     *  sync effect (so offset/repeat don't stomp siblings). */
+    mosaic: THREE.MeshPhysicalMaterial;
   };
 
   const buildMaskedSet = (polyOffset: number): MaskedSet => {
@@ -1143,7 +1294,18 @@ export default function BagMesh({
       );
     };
 
-    return { mylar, foil, prismatic, chrome };
+    // Mosaic variant — simple PBR material (no custom shader). The actual
+    // texture + artwork alphaMap + aspect-correct crop are assigned in the
+    // syncMaskedSet effect because they depend on live mosaic state and
+    // the artwork's per-side alpha channel.
+    const mosaic = new THREE.MeshPhysicalMaterial({
+      metalness: 0.1,
+      roughness: 0.45,
+      envMapIntensity: LABEL_ENV_BASE,
+      ...commonTransparent,
+    });
+
+    return { mylar, foil, prismatic, chrome, mosaic };
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1154,6 +1316,77 @@ export default function BagMesh({
   const layer3FrontMaskedSet = useMemo(() => buildMaskedSet(-8), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer3BackMaskedSet = useMemo(() => buildMaskedSet(-8), []);
+
+  // ── Per-masked-set mosaic Texture clones ─────────────────────────────────
+  // Each masked variant needs its own clone so offset/repeat on one doesn't
+  // leak into siblings. Re-created whenever the shared source texture
+  // changes (e.g. user uploads a new mosaic source image).
+  const [layer2FrontMosaicTex, setLayer2FrontMosaicTex] = useState<THREE.Texture | null>(null);
+  const [layer2BackMosaicTex, setLayer2BackMosaicTex] = useState<THREE.Texture | null>(null);
+  const [layer3FrontMosaicTex, setLayer3FrontMosaicTex] = useState<THREE.Texture | null>(null);
+  const [layer3BackMosaicTex, setLayer3BackMosaicTex] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    if (!mosaicSourceTex) {
+      setLayer2FrontMosaicTex(null);
+      setLayer2BackMosaicTex(null);
+      setLayer3FrontMosaicTex(null);
+      setLayer3BackMosaicTex(null);
+      return;
+    }
+    const a = cloneMosaicTexture(mosaicSourceTex);
+    const b = cloneMosaicTexture(mosaicSourceTex);
+    const c = cloneMosaicTexture(mosaicSourceTex);
+    const d = cloneMosaicTexture(mosaicSourceTex);
+    setLayer2FrontMosaicTex(a);
+    setLayer2BackMosaicTex(b);
+    setLayer3FrontMosaicTex(c);
+    setLayer3BackMosaicTex(d);
+    return () => {
+      a.dispose();
+      b.dispose();
+      c.dispose();
+      d.dispose();
+    };
+  }, [mosaicSourceTex]);
+
+  // ── Artwork alpha-maps (for mosaic cutouts) ──────────────────────────────
+  // When a layer paints mosaic colour, the artwork's alpha channel acts as
+  // the cutout mask via MeshPhysicalMaterial.alphaMap. We derive greyscale
+  // alpha textures once per artwork texture and assign them into the mosaic
+  // variant inside syncMaskedSet.
+  const [frontArtAlpha, setFrontArtAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [backArtAlpha, setBackArtAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3FrontArtAlpha, setLayer3FrontArtAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3BackArtAlpha, setLayer3BackArtAlpha] = useState<THREE.CanvasTexture | null>(null);
+
+  useEffect(() => {
+    if (!frontLabelTex) { setFrontArtAlpha(null); return; }
+    const tex = buildArtworkAlphaMap(frontLabelTex);
+    setFrontArtAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [frontLabelTex]);
+
+  useEffect(() => {
+    if (!backLabelTex) { setBackArtAlpha(null); return; }
+    const tex = buildArtworkAlphaMap(backLabelTex);
+    setBackArtAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [backLabelTex]);
+
+  useEffect(() => {
+    if (!layer3FrontTex) { setLayer3FrontArtAlpha(null); return; }
+    const tex = buildArtworkAlphaMap(layer3FrontTex);
+    setLayer3FrontArtAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3FrontTex]);
+
+  useEffect(() => {
+    if (!layer3BackTex) { setLayer3BackArtAlpha(null); return; }
+    const tex = buildArtworkAlphaMap(layer3BackTex);
+    setLayer3BackArtAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3BackTex]);
 
   // Resolve the effective Material-mode surface for a given layer. Each
   // layer can override Layer 1's finish via `matFinish`; when omitted the
@@ -1181,9 +1414,13 @@ export default function BagMesh({
         iridescenceThicknessRange,
       };
     }
-    if (matFinish === "custom") {
+    // Custom and Mosaic both read metalness/roughness from the per-layer
+    // "Custom" sliders (labelMatMetalness etc.). Mosaic reuses the same
+    // numbers so the user has a single surface-knob story, without
+    // doubling the persisted schema for a second set of sliders.
+    if (matFinish === "custom" || matFinish === "mosaic") {
       return {
-        finish: "custom",
+        finish: matFinish,
         metalness: matCustomMet ?? metalness,
         roughness: matCustomRough ?? roughness,
         iridescence: 0,
@@ -1217,10 +1454,26 @@ export default function BagMesh({
   // The artwork texture is bound as `map` so its .a channel drives the cutout;
   // each variant's custom shader is careful to leave gl_FragColor.a alone so
   // the alphaMap chain still attenuates visibility.
+  //
+  // `mosaic` params are read only when the layer's finish is "mosaic" — the
+  // mosaic variant's `.map` becomes the source-image crop while the artwork's
+  // alpha channel (derived separately into a greyscale alphaMap) carves the
+  // artwork shape out of that colour. Passing `mosaicTex = null` (no uploaded
+  // source) leaves the variant empty so pickMasked can still fall back.
   const syncMaskedSet = (
     set: MaskedSet,
     tex: THREE.Texture | null,
-    surface: LayerSurface
+    surface: LayerSurface,
+    mosaic?: {
+      mosaicTex: THREE.Texture | null;
+      artAlpha: THREE.Texture | null;
+      aspect: number | null;
+      zoom: number;
+      offsetU: number;
+      offsetV: number;
+      flipX: boolean;
+      flipY: boolean;
+    }
   ) => {
     // Mylar variant — mirror this layer's resolved physical surface.
     set.mylar.map = tex;
@@ -1251,63 +1504,141 @@ export default function BagMesh({
     set.chrome.map = tex;
     set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale * uvEnvMult;
     set.chrome.needsUpdate = true;
+
+    // Mosaic variant — map = source crop, alphaMap = artwork alpha.
+    // When mosaicTex or artAlpha is missing the material stays empty so the
+    // mesh doesn't render a coloured rectangle where artwork should be.
+    // Metalness/roughness mirror this layer's resolved surface so the
+    // Mosaic finish responds to the same sliders that drive Custom —
+    // gives the user a single surface-knob story without duplicating
+    // the persisted schema.
+    set.mosaic.map = mosaic?.mosaicTex ?? null;
+    set.mosaic.alphaMap = mosaic?.artAlpha ?? null;
+    set.mosaic.metalness = surface.metalness;
+    set.mosaic.roughness = surface.roughness;
+    set.mosaic.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    if (mosaic?.mosaicTex) {
+      applyMosaicCrop(mosaic.mosaicTex, resolveMosaicCrop({
+        aspect: mosaic.aspect,
+        zoom: mosaic.zoom,
+        offsetU: mosaic.offsetU,
+        offsetV: mosaic.offsetV,
+        flipX: mosaic.flipX,
+        flipY: mosaic.flipY,
+      }));
+      mosaic.mosaicTex.needsUpdate = true;
+    }
+    set.mosaic.needsUpdate = true;
   };
 
-  useEffect(() => {
-    syncMaskedSet(layer2FrontMaskedSet, frontLabelTex, layer2Surface);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frontLabelTex, color, layer2Surface, envIntensityScale, layer2FrontMaskedSet, holographicTex]);
+  // Front panel's mosaic aspect comes from the rebuilt label geometry's
+  // userData.panelAspect (stored by buildLabelGeo). Backs share aspect with
+  // the mirrored front. Fall back to 1 so first-mount race with geometry
+  // build doesn't crash resolveMosaicCrop.
+  const frontPanelAspect = (frontLabelGeo?.userData?.panelAspect as number | undefined) ?? 1;
+  const backPanelAspect = (backLabelGeo?.userData?.panelAspect as number | undefined) ?? 1;
 
   useEffect(() => {
-    syncMaskedSet(layer2BackMaskedSet, backLabelTex, layer2Surface);
+    syncMaskedSet(layer2FrontMaskedSet, frontLabelTex, layer2Surface, {
+      mosaicTex: layer2FrontMosaicTex,
+      artAlpha: frontArtAlpha,
+      aspect: frontPanelAspect,
+      zoom: mosaicZoom,
+      offsetU: labelMosaicOffsetU,
+      offsetV: labelMosaicOffsetV,
+      flipX: labelMosaicFlipX,
+      flipY: labelMosaicFlipY,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backLabelTex, color, layer2Surface, envIntensityScale, layer2BackMaskedSet, holographicTex]);
+  }, [frontLabelTex, color, layer2Surface, envIntensityScale, layer2FrontMaskedSet, holographicTex,
+      layer2FrontMosaicTex, frontArtAlpha, frontPanelAspect, mosaicZoom, labelMosaicOffsetU, labelMosaicOffsetV, labelMosaicFlipX, labelMosaicFlipY]);
 
   useEffect(() => {
-    syncMaskedSet(layer3FrontMaskedSet, layer3FrontTex, layer3Surface);
+    syncMaskedSet(layer2BackMaskedSet, backLabelTex, layer2Surface, {
+      mosaicTex: layer2BackMosaicTex,
+      artAlpha: backArtAlpha,
+      aspect: backPanelAspect,
+      zoom: mosaicZoom,
+      offsetU: labelMosaicOffsetU,
+      offsetV: labelMosaicOffsetV,
+      flipX: labelMosaicFlipX,
+      flipY: labelMosaicFlipY,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layer3FrontTex, color, layer3Surface, envIntensityScale, layer3FrontMaskedSet, holographicTex]);
+  }, [backLabelTex, color, layer2Surface, envIntensityScale, layer2BackMaskedSet, holographicTex,
+      layer2BackMosaicTex, backArtAlpha, backPanelAspect, mosaicZoom, labelMosaicOffsetU, labelMosaicOffsetV, labelMosaicFlipX, labelMosaicFlipY]);
 
   useEffect(() => {
-    syncMaskedSet(layer3BackMaskedSet, layer3BackTex, layer3Surface);
+    syncMaskedSet(layer3FrontMaskedSet, layer3FrontTex, layer3Surface, {
+      mosaicTex: layer3FrontMosaicTex,
+      artAlpha: layer3FrontArtAlpha,
+      aspect: frontPanelAspect,
+      zoom: mosaicZoom,
+      offsetU: layer3MosaicOffsetU,
+      offsetV: layer3MosaicOffsetV,
+      flipX: layer3MosaicFlipX,
+      flipY: layer3MosaicFlipY,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layer3BackTex, color, layer3Surface, envIntensityScale, layer3BackMaskedSet, holographicTex]);
+  }, [layer3FrontTex, color, layer3Surface, envIntensityScale, layer3FrontMaskedSet, holographicTex,
+      layer3FrontMosaicTex, layer3FrontArtAlpha, frontPanelAspect, mosaicZoom, layer3MosaicOffsetU, layer3MosaicOffsetV, layer3MosaicFlipX, layer3MosaicFlipY]);
+
+  useEffect(() => {
+    syncMaskedSet(layer3BackMaskedSet, layer3BackTex, layer3Surface, {
+      mosaicTex: layer3BackMosaicTex,
+      artAlpha: layer3BackArtAlpha,
+      aspect: backPanelAspect,
+      zoom: mosaicZoom,
+      offsetU: layer3MosaicOffsetU,
+      offsetV: layer3MosaicOffsetV,
+      flipX: layer3MosaicFlipX,
+      flipY: layer3MosaicFlipY,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layer3BackTex, color, layer3Surface, envIntensityScale, layer3BackMaskedSet, holographicTex,
+      layer3BackMosaicTex, layer3BackArtAlpha, backPanelAspect, mosaicZoom, layer3MosaicOffsetU, layer3MosaicOffsetV, layer3MosaicFlipX, layer3MosaicFlipY]);
 
   // Pick the active masked variant per set based on THIS LAYER's resolved
   // finish. iridescence > 0 (Multi-Chrome preset) routes to the chrome shader.
-  const pickMasked = (set: MaskedSet, surface: LayerSurface): THREE.Material => {
+  // Mosaic needs both a source texture and the artwork alpha to render; when
+  // either is missing (user hasn't uploaded yet) we fall back to the mylar
+  // variant so the layer still shows the raw artwork rather than vanishing.
+  const pickMasked = (
+    set: MaskedSet,
+    surface: LayerSurface,
+    mosaicReady: boolean
+  ): THREE.Material => {
     if (surface.finish === "foil") return set.foil;
     if (surface.finish === "prismatic") return set.prismatic;
     if (surface.finish === "multi-chrome" || surface.iridescence > 0) return set.chrome;
+    if (surface.finish === "mosaic" && mosaicReady) return set.mosaic;
     return set.mylar;
   };
+  const layer2FrontMosaicReady = !!(layer2FrontMosaicTex && frontArtAlpha);
+  const layer2BackMosaicReady = !!(layer2BackMosaicTex && backArtAlpha);
+  const layer3FrontMosaicReady = !!(layer3FrontMosaicTex && layer3FrontArtAlpha);
+  const layer3BackMosaicReady = !!(layer3BackMosaicTex && layer3BackArtAlpha);
+
   const layer2FrontMasked = useMemo(
-    () => pickMasked(layer2FrontMaskedSet, layer2Surface),
+    () => pickMasked(layer2FrontMaskedSet, layer2Surface, layer2FrontMosaicReady),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer2Surface, layer2FrontMaskedSet]
+    [layer2Surface, layer2FrontMaskedSet, layer2FrontMosaicReady]
   );
   const layer2BackMasked = useMemo(
-    () => pickMasked(layer2BackMaskedSet, layer2Surface),
+    () => pickMasked(layer2BackMaskedSet, layer2Surface, layer2BackMosaicReady),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer2Surface, layer2BackMaskedSet]
+    [layer2Surface, layer2BackMaskedSet, layer2BackMosaicReady]
   );
   const layer3FrontMasked = useMemo(
-    () => pickMasked(layer3FrontMaskedSet, layer3Surface),
+    () => pickMasked(layer3FrontMaskedSet, layer3Surface, layer3FrontMosaicReady),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer3Surface, layer3FrontMaskedSet]
+    [layer3Surface, layer3FrontMaskedSet, layer3FrontMosaicReady]
   );
   const layer3BackMasked = useMemo(
-    () => pickMasked(layer3BackMaskedSet, layer3Surface),
+    () => pickMasked(layer3BackMaskedSet, layer3Surface, layer3BackMosaicReady),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer3Surface, layer3BackMaskedSet]
+    [layer3Surface, layer3BackMaskedSet, layer3BackMosaicReady]
   );
-
-  // ── Label geometries (front + back, regenerated on decalDirty) ─────────────
-  const [frontLabelGeo, setFrontLabelGeo] = useState<THREE.BufferGeometry | null>(null);
-  const [backLabelGeo, setBackLabelGeo] = useState<THREE.BufferGeometry | null>(null);
-
-  useEffect(() => () => { frontLabelGeo?.dispose(); }, [frontLabelGeo]);
-  useEffect(() => () => { backLabelGeo?.dispose(); }, [backLabelGeo]);
 
   // ── Animation loop: float + decal rebuild ──────────────────────────────────
   // BASE_Y_FLOAT centres the gentle ±0.02 oscillation in the Default scene;

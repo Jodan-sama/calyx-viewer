@@ -10,6 +10,14 @@ import {
 } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
+import {
+  applyMosaicCrop,
+  buildArtworkAlphaMap,
+  buildMirroredLabelTexture,
+  cloneMosaicTexture,
+  loadMosaicTexture,
+  resolveMosaicCrop,
+} from "@/lib/mosaicTexture";
 
 // ── Assets ───────────────────────────────────────────────────────────────────
 // The full jar comes from two glbs: one provides the body + lid (we reuse it
@@ -151,6 +159,41 @@ interface SupplementJarMeshProps {
   layer2UV?: boolean;
   /** Tag Layer 3 artwork as fluorescent under UV Blacklight. */
   layer3UV?: boolean;
+
+  /** Mosaic finish — source image shared across every layer set to
+   *  finish === "mosaic". Null → mosaic layers fall back to a neutral
+   *  placeholder (user hasn't uploaded a source yet). */
+  mosaicSourceUrl?: string | null;
+  /** Centre-mirror the source before any layer samples from it. Useful
+   *  on the jar to add a symmetric wrap the cylindrical UV doesn't
+   *  provide on its own. */
+  mosaicMirror?: boolean;
+  /** Shared 0–1 crop zoom. 1 = full-fit aspect-correct crop; smaller
+   *  zooms into finer detail. */
+  mosaicZoom?: number;
+  /** Layer 1 mosaic crop seed + flip X/Y. Jar label aspect is computed
+   *  from the cylindrical geometry so the crop matches circumference /
+   *  height and the source never gets squashed when wrapping.
+   *  `*MirrorRotation` is only applied in mirror mode (baked into the
+   *  label-aspect canvas), giving the HP-style random-angle crop look
+   *  without distorting the final label. */
+  mosaicOffsetU?: number;
+  mosaicOffsetV?: number;
+  mosaicFlipX?: boolean;
+  mosaicFlipY?: boolean;
+  mosaicMirrorRotation?: number;
+  /** Layer 2 mosaic crop seed + flip X/Y + mirror rotation. */
+  layer2MosaicOffsetU?: number;
+  layer2MosaicOffsetV?: number;
+  layer2MosaicFlipX?: boolean;
+  layer2MosaicFlipY?: boolean;
+  layer2MosaicMirrorRotation?: number;
+  /** Layer 3 mosaic crop seed + flip X/Y + mirror rotation. */
+  layer3MosaicOffsetU?: number;
+  layer3MosaicOffsetV?: number;
+  layer3MosaicFlipX?: boolean;
+  layer3MosaicFlipY?: boolean;
+  layer3MosaicMirrorRotation?: number;
 }
 
 // ── HSV → RGB helper for holographic texture (duplicated from BagMesh) ──────
@@ -243,6 +286,27 @@ async function loadLabelTexture(
 // (computed on the merged label geometry before this call). After toNonIndexed
 // duplicates each vertex per triangle, we transfer those smooth normals back
 // via a position hash so the seam-bumping doesn't reintroduce flat shading.
+/** Mean radial distance across the vertices of `src`, used to estimate
+ *  the cylindrical label's circumference so the mosaic finish can crop
+ *  its source at circumference/height aspect (no axial vs. radial
+ *  squash when the label wraps the jar). */
+function meanRadius(src: THREE.BufferGeometry): number {
+  const pos = src.attributes.position as THREE.BufferAttribute | undefined;
+  if (!pos) return 1;
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const r = Math.sqrt(x * x + z * z);
+    if (r > 1e-6) {
+      sum += r;
+      n++;
+    }
+  }
+  return n > 0 ? sum / n : 1;
+}
+
 function cylindricalUVs(
   src: THREE.BufferGeometry,
   yMin: number,
@@ -321,6 +385,14 @@ function cylindricalUVs(
     geo.computeVertexNormals();
   }
 
+  // Stash circumference/height aspect so the Mosaic finish can match
+  // its crop aspect to the label's unwrapped rectangle. Without this
+  // the source gets squashed vertically when wrapping the cylinder —
+  // users called this "distorting to wrap around the jar".
+  const r = meanRadius(src);
+  const h = (yMax - yMin) || 1;
+  geo.userData.panelAspect = (2 * Math.PI * r) / h;
+
   return geo;
 }
 
@@ -355,6 +427,24 @@ export default function SupplementJarMesh({
   layer3UV = false,
   envIntensityScale = 1,
   floating = true,
+  mosaicSourceUrl = null,
+  mosaicMirror = false,
+  mosaicZoom = 1,
+  mosaicOffsetU = 0,
+  mosaicOffsetV = 0,
+  mosaicFlipX = false,
+  mosaicFlipY = false,
+  mosaicMirrorRotation = 0,
+  layer2MosaicOffsetU = 0,
+  layer2MosaicOffsetV = 0,
+  layer2MosaicFlipX = false,
+  layer2MosaicFlipY = false,
+  layer2MosaicMirrorRotation = 0,
+  layer3MosaicOffsetU = 0,
+  layer3MosaicOffsetV = 0,
+  layer3MosaicFlipX = false,
+  layer3MosaicFlipY = false,
+  layer3MosaicMirrorRotation = 0,
 }: SupplementJarMeshProps) {
   // Kill HDRI-driven reflections on every material when UV Blacklight
   // is active — same dampening as BagMesh. The violet rig is the only
@@ -576,14 +666,65 @@ export default function SupplementJarMesh({
     []
   );
 
+  // ── Mosaic source texture (shared) + Layer 1 mosaic material ─────────────
+  // Loaded once per source URL change. Every layer set to finish === "mosaic"
+  // samples from this via its own Texture clone (set in the masked-set sync
+  // effects below) so offset/repeat don't stomp siblings.
+  //
+  // Mirror mode does NOT swap this shared source (unlike the bag path).
+  // The jar's cylindrical label is much wider than tall, so a 1:1
+  // mirrored source would still tile 3–4× around the circumference and
+  // show 3–4 mirror axes. Instead, each layer builds its own
+  // label-aspect mirror canvas (see the per-layer effects below) which
+  // fills the label in one wrap with a single centre mirror.
+  const [mosaicSourceTex, setMosaicSourceTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!mosaicSourceUrl) { setMosaicSourceTex(null); return; }
+    const signal = { cancelled: false };
+    loadMosaicTexture(mosaicSourceUrl, signal).then((tex) => {
+      if (!signal.cancelled && tex) setMosaicSourceTex(tex);
+    });
+    return () => { signal.cancelled = true; };
+  }, [mosaicSourceUrl]);
+
+  const mosaicLabelMat = useMemo(
+    () => new THREE.MeshPhysicalMaterial({
+      envMapIntensity: MYLAR_ENV_BASE,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+    []
+  );
+  const [mosaicLabelTex, setMosaicLabelTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!mosaicSourceTex) { setMosaicLabelTex(null); return; }
+    const clone = cloneMosaicTexture(mosaicSourceTex);
+    setMosaicLabelTex(clone);
+    return () => { clone.dispose(); };
+  }, [mosaicSourceTex]);
+
+  // Mirror-mode label canvases — declared up-front so `layer1Material`
+  // and the per-layer pickMasked readiness checks below can reference
+  // them without a TDZ crash. The build effects live further down
+  // (after labelGeo gives us jarLabelAspect) and populate these states.
+  const [mosaicLabelMirrorTex, setMosaicLabelMirrorTex] = useState<THREE.CanvasTexture | null>(null);
+  const [layer2MosaicMirrorTex, setLayer2MosaicMirrorTex] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3MosaicMirrorTex, setLayer3MosaicMirrorTex] = useState<THREE.CanvasTexture | null>(null);
+
   // Pick the active Layer 1 material — matches BagMesh's traversal logic.
+  // Mosaic is allowed as long as EITHER the regular clone or the
+  // mirror canvas is ready; the Layer 1 sync effect picks whichever is
+  // active based on `mosaicMirror`.
   const layer1Material: THREE.Material = useMemo(() => {
     if (lighting === "uv") return uvDarkMat;
     if (finish === "foil") return holographicFoilMat;
     if (finish === "prismatic") return prismaticFoilMat;
+    if (finish === "mosaic" && (mosaicLabelTex || mosaicLabelMirrorTex)) return mosaicLabelMat;
     if (iridescence > 0) return multiChromeMat;
     return mylarMat;
-  }, [finish, iridescence, lighting, mylarMat, holographicFoilMat, prismaticFoilMat, multiChromeMat, uvDarkMat]);
+  }, [finish, iridescence, lighting, mylarMat, holographicFoilMat, prismaticFoilMat, multiChromeMat, uvDarkMat, mosaicLabelMat, mosaicLabelTex, mosaicLabelMirrorTex]);
 
   // ── Layer 2 + Layer 3 decal materials ─────────────────────────────────────
   // MeshPhysicalMaterial instead of MeshStandardMaterial so the Varnish toggle
@@ -648,6 +789,10 @@ export default function SupplementJarMesh({
     prismatic: THREE.MeshPhysicalMaterial;
     /** Multi-Chrome shader masked by alpha. */
     chrome: THREE.MeshPhysicalMaterial;
+    /** Mosaic — map = mosaic source crop, alphaMap = artwork alpha. The
+     *  actual textures are assigned in syncMaskedSet since they depend on
+     *  live props; this material just owns the PBR shell. */
+    mosaic: THREE.MeshPhysicalMaterial;
   };
 
   const buildMaskedSet = (polyOffset: number): MaskedSet => {
@@ -752,13 +897,40 @@ export default function SupplementJarMesh({
       );
     };
 
-    return { mylar, foil, prismatic, chrome };
+    const mosaic = new THREE.MeshPhysicalMaterial({
+      metalness: 0.1,
+      roughness: 0.45,
+      envMapIntensity: DECAL_ENV_BASE,
+      ...commonTransparent,
+    });
+
+    return { mylar, foil, prismatic, chrome, mosaic };
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer2MaskedSet = useMemo(() => buildMaskedSet(-4), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer3MaskedSet = useMemo(() => buildMaskedSet(-8), []);
+
+  // ── Per-masked-set mosaic Texture clones + artwork alpha maps ────────────
+  // One clone per consumer so offset/repeat stay independent.
+  const [layer2MosaicTex, setLayer2MosaicTex] = useState<THREE.Texture | null>(null);
+  const [layer3MosaicTex, setLayer3MosaicTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!mosaicSourceTex) {
+      setLayer2MosaicTex(null);
+      setLayer3MosaicTex(null);
+      return;
+    }
+    const a = cloneMosaicTexture(mosaicSourceTex);
+    const b = cloneMosaicTexture(mosaicSourceTex);
+    setLayer2MosaicTex(a);
+    setLayer3MosaicTex(b);
+    return () => { a.dispose(); b.dispose(); };
+  }, [mosaicSourceTex]);
+
+  const [layer2ArtAlpha, setLayer2ArtAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3ArtAlpha, setLayer3ArtAlpha] = useState<THREE.CanvasTexture | null>(null);
 
   const [layer2Tex, setLayer2Tex] = useState<THREE.Texture | null>(null);
   const [layer3Tex, setLayer3Tex] = useState<THREE.Texture | null>(null);
@@ -796,6 +968,23 @@ export default function SupplementJarMesh({
     if (!layer3Tex) { setLayer3BumpTex(null); return; }
     const tex = buildAlphaBumpTexture(layer3Tex);
     setLayer3BumpTex(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3Tex]);
+
+  // Artwork alpha maps — greyscale of the .a channel, used as
+  // MeshPhysicalMaterial.alphaMap on the mosaic masked variant so the
+  // artwork's shape cuts out the mosaic colour.
+  useEffect(() => {
+    if (!layer2Tex) { setLayer2ArtAlpha(null); return; }
+    const tex = buildArtworkAlphaMap(layer2Tex);
+    setLayer2ArtAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer2Tex]);
+
+  useEffect(() => {
+    if (!layer3Tex) { setLayer3ArtAlpha(null); return; }
+    const tex = buildArtworkAlphaMap(layer3Tex);
+    setLayer3ArtAlpha(tex);
     return () => { tex?.dispose(); };
   }, [layer3Tex]);
 
@@ -884,9 +1073,12 @@ export default function SupplementJarMesh({
         iridescenceThicknessRange,
       };
     }
-    if (matFinish === "custom") {
+    // Custom and Mosaic both pull metalness/roughness from the per-layer
+    // Custom sliders — mosaic reuses the same knobs so we don't persist
+    // a second set of fields just for surface gloss.
+    if (matFinish === "custom" || matFinish === "mosaic") {
       return {
-        finish: "custom",
+        finish: matFinish,
         metalness: matCustomMet ?? metalness,
         roughness: matCustomRough ?? roughness,
         iridescence: 0,
@@ -926,7 +1118,17 @@ export default function SupplementJarMesh({
   const syncMaskedSet = (
     set: MaskedSet,
     tex: THREE.Texture | null,
-    surface: LayerSurface
+    surface: LayerSurface,
+    mosaic?: {
+      mosaicTex: THREE.Texture | null;
+      artAlpha: THREE.Texture | null;
+      aspect: number | null;
+      zoom: number;
+      offsetU: number;
+      offsetV: number;
+      flipX: boolean;
+      flipY: boolean;
+    }
   ) => {
     // Mylar variant — mirror this layer's resolved physical surface.
     set.mylar.map = tex;
@@ -957,111 +1159,30 @@ export default function SupplementJarMesh({
     set.chrome.map = tex;
     set.chrome.envMapIntensity = CHROME_ENV_BASE * envIntensityScale * uvEnvMult;
     set.chrome.needsUpdate = true;
-  };
 
-  useEffect(() => {
-    syncMaskedSet(layer2MaskedSet, layer2Tex, layer2Surface);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    layer2Tex,
-    labelColor,
-    layer2Surface,
-    envIntensityScale,
-    lighting,
-    layer2MaskedSet,
-    holographicTex,
-  ]);
-
-  useEffect(() => {
-    syncMaskedSet(layer3MaskedSet, layer3Tex, layer3Surface);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    layer3Tex,
-    labelColor,
-    layer3Surface,
-    envIntensityScale,
-    lighting,
-    layer3MaskedSet,
-    holographicTex,
-  ]);
-
-  // Pick the active masked variant for each layer based on ITS OWN finish.
-  // Iridescence > 0 (Multi-Chrome preset) routes to the chrome shader rather
-  // than mylar so the rainbow reads properly.
-  const pickMasked = (set: MaskedSet, surface: LayerSurface): THREE.Material => {
-    if (surface.finish === "foil") return set.foil;
-    if (surface.finish === "prismatic") return set.prismatic;
-    if (surface.finish === "multi-chrome" || surface.iridescence > 0) return set.chrome;
-    return set.mylar;
-  };
-  const layer2Masked = useMemo(
-    () => pickMasked(layer2MaskedSet, layer2Surface),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer2Surface, layer2MaskedSet]
-  );
-  const layer3Masked = useMemo(
-    () => pickMasked(layer3MaskedSet, layer3Surface),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layer3Surface, layer3MaskedSet]
-  );
-
-  useEffect(() => {
-    layer3Mat.map = layer3Tex;
-    if (layer3Varnish || layer3Tactile) {
-      layer3Mat.metalness = 0;
-      layer3Mat.roughness = VARNISH_ROUGHNESS;
-      layer3Mat.clearcoat = VARNISH_CLEARCOAT;
-      layer3Mat.clearcoatRoughness = VARNISH_CLEARCOAT_ROUGHNESS;
-      layer3Mat.bumpMap = layer3BumpTex;
-      layer3Mat.bumpScale = VARNISH_BUMP_SCALE;
-    } else {
-      layer3Mat.metalness = layer3Metalness;
-      layer3Mat.roughness = layer3Roughness;
-      layer3Mat.clearcoat = 0;
-      layer3Mat.clearcoatRoughness = 0;
-      layer3Mat.bumpMap = null;
-      layer3Mat.bumpScale = 0;
+    // Mosaic — artwork alpha is the cutout, mosaic source is the colour.
+    // The aspect comes from the cylindrical label geometry (circumference
+    // / height) so a crop wrapping the jar keeps its source proportions.
+    // Metalness/roughness mirror the resolved surface so the Mosaic
+    // finish responds to the Custom-style per-layer sliders.
+    set.mosaic.map = mosaic?.mosaicTex ?? null;
+    set.mosaic.alphaMap = mosaic?.artAlpha ?? null;
+    set.mosaic.metalness = surface.metalness;
+    set.mosaic.roughness = surface.roughness;
+    set.mosaic.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    if (mosaic?.mosaicTex) {
+      applyMosaicCrop(mosaic.mosaicTex, resolveMosaicCrop({
+        aspect: mosaic.aspect,
+        zoom: mosaic.zoom,
+        offsetU: mosaic.offsetU,
+        offsetV: mosaic.offsetV,
+        flipX: mosaic.flipX,
+        flipY: mosaic.flipY,
+      }));
+      mosaic.mosaicTex.needsUpdate = true;
     }
-    if (layer3UV && lighting === "uv") {
-      layer3Mat.emissive = new THREE.Color(UV_GLOW_COLOR);
-      layer3Mat.emissiveMap = layer3Tex;
-      layer3Mat.emissiveIntensity = 6.5;
-    } else {
-      layer3Mat.emissive = new THREE.Color(0x000000);
-      layer3Mat.emissiveMap = null;
-      layer3Mat.emissiveIntensity = 1;
-    }
-    layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer3Mat.needsUpdate = true;
-  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, layer3Mat, layer3UV, lighting]);
-
-  // ── Scene processing (body + label) ───────────────────────────────────────
-  // Body: hide the old glb's built-in label (any non-Plastic primitive) and
-  // swap our plastic material in over the remaining body/lid meshes.
-  const processedBodyScene = useMemo(() => {
-    const clone = bodyScene.clone(true);
-    clone.traverse((obj) => {
-      const m = obj as THREE.Mesh;
-      if (!m.isMesh || !m.geometry) return;
-      const mat = m.material as THREE.Material | undefined;
-      if (mat?.name === "Plastic") {
-        m.castShadow = true;
-        m.receiveShadow = true;
-      } else {
-        m.visible = false;
-      }
-    });
-    return clone;
-  }, [bodyScene]);
-
-  // Keep the plastic material assignment reactive so env-scale updates land.
-  useEffect(() => {
-    processedBodyScene.traverse((obj) => {
-      const m = obj as THREE.Mesh;
-      if (!m.isMesh || !m.visible) return;
-      m.material = plasticMat;
-    });
-  }, [processedBodyScene, plasticMat]);
+    set.mosaic.needsUpdate = true;
+  };
 
   // Label: clone the label-only glb, bake each primitive's world matrix into
   // its geometry, merge them all into one BufferGeometry, weld vertices that
@@ -1070,15 +1191,10 @@ export default function SupplementJarMesh({
   // which read as dark vertical stripes under reflective materials), then
   // reproject UVs onto a cylinder. The final geometry is shared by Layer 1
   // (base material), Layer 2 (artwork/foil), and Layer 3 (artwork/foil).
-  // Centred clone of the label geometry + original centroid. The shell
-  // stack scales about mesh-local origin, and the jar's label wraps a
-  // cylinder whose origin sits on the jar's central axis — NOT the
-  // label's centroid. Scaling Y about that origin drifts the stack
-  // vertically; recentring the geometry and repositioning the shell at
-  // the original centroid fixes the pivot.
   //
-  // Declared alongside `labelGeo` so the two useMemos share the same
-  // dependency surface and stay in lockstep on model swaps.
+  // Declared up here (rather than next to the autofit block below) so the
+  // mosaic sync effects can read `userData.panelAspect` — the cylindrical
+  // aspect ratio cylindricalUVs stashes on the geo — without a TDZ crash.
   const labelGeo = useMemo(() => {
     const clone = labelScene.clone(true);
     clone.updateMatrixWorld(true);
@@ -1176,6 +1292,281 @@ export default function SupplementJarMesh({
 
     return cylindricalUVs(welded, yMin, yMax, seamAngle);
   }, [labelScene]);
+
+  // Cylindrical-label aspect read off the geometry's userData (written by
+  // cylindricalUVs). Drives every mosaic crop on the jar so wrapping the
+  // source around the cylinder doesn't squash it vertically.
+  const jarLabelAspect = (labelGeo.userData?.panelAspect as number | undefined) ?? null;
+
+  // ── Per-layer label-aspect mirror canvases (build effects) ─────────────
+  // State declared earlier (up with the other mosaic state); these
+  // effects populate the canvases once jarLabelAspect is available.
+  // When mirror mode is on, each mosaic layer uses a canvas pre-baked at
+  // the cylindrical label's aspect (so it fills in one wrap, no tiling,
+  // one mirror axis dead-centre). Each layer bakes its own canvas
+  // because the three layers use different offset seeds.
+  useEffect(() => {
+    if (!mosaicMirror || !mosaicSourceTex || !jarLabelAspect) {
+      setMosaicLabelMirrorTex(null);
+      return;
+    }
+    const img = mosaicSourceTex.image as
+      | HTMLImageElement
+      | HTMLCanvasElement
+      | ImageBitmap
+      | undefined;
+    if (!img) return;
+    const tex = buildMirroredLabelTexture({
+      source: img,
+      labelAspect: jarLabelAspect,
+      zoom: mosaicZoom,
+      offsetU: mosaicOffsetU,
+      offsetV: mosaicOffsetV,
+      rotation: mosaicMirrorRotation,
+    });
+    setMosaicLabelMirrorTex(tex);
+    return () => { tex?.dispose(); };
+  }, [mosaicMirror, mosaicSourceTex, jarLabelAspect, mosaicZoom, mosaicOffsetU, mosaicOffsetV, mosaicMirrorRotation]);
+
+  useEffect(() => {
+    if (!mosaicMirror || !mosaicSourceTex || !jarLabelAspect) {
+      setLayer2MosaicMirrorTex(null);
+      return;
+    }
+    const img = mosaicSourceTex.image as
+      | HTMLImageElement
+      | HTMLCanvasElement
+      | ImageBitmap
+      | undefined;
+    if (!img) return;
+    const tex = buildMirroredLabelTexture({
+      source: img,
+      labelAspect: jarLabelAspect,
+      zoom: mosaicZoom,
+      offsetU: layer2MosaicOffsetU,
+      offsetV: layer2MosaicOffsetV,
+      rotation: layer2MosaicMirrorRotation,
+    });
+    setLayer2MosaicMirrorTex(tex);
+    return () => { tex?.dispose(); };
+  }, [mosaicMirror, mosaicSourceTex, jarLabelAspect, mosaicZoom, layer2MosaicOffsetU, layer2MosaicOffsetV, layer2MosaicMirrorRotation]);
+
+  useEffect(() => {
+    if (!mosaicMirror || !mosaicSourceTex || !jarLabelAspect) {
+      setLayer3MosaicMirrorTex(null);
+      return;
+    }
+    const img = mosaicSourceTex.image as
+      | HTMLImageElement
+      | HTMLCanvasElement
+      | ImageBitmap
+      | undefined;
+    if (!img) return;
+    const tex = buildMirroredLabelTexture({
+      source: img,
+      labelAspect: jarLabelAspect,
+      zoom: mosaicZoom,
+      offsetU: layer3MosaicOffsetU,
+      offsetV: layer3MosaicOffsetV,
+      rotation: layer3MosaicMirrorRotation,
+    });
+    setLayer3MosaicMirrorTex(tex);
+    return () => { tex?.dispose(); };
+  }, [mosaicMirror, mosaicSourceTex, jarLabelAspect, mosaicZoom, layer3MosaicOffsetU, layer3MosaicOffsetV, layer3MosaicMirrorRotation]);
+
+  // Layer 1 mosaic sync — reads jarLabelAspect. Metalness/roughness flow
+  // from the base props so Custom-style surface sliders tune the finish
+  // (BagViewer unhides them when finish === "mosaic"). When mirror is on,
+  // the label-aspect mirror canvas takes over: it's already sized to fill
+  // the label in one wrap, so we bypass the crop transform entirely.
+  useEffect(() => {
+    const useMirror = mosaicMirror && mosaicLabelMirrorTex != null;
+    const activeTex: THREE.Texture | null = useMirror
+      ? mosaicLabelMirrorTex
+      : mosaicLabelTex;
+    mosaicLabelMat.map = activeTex;
+    mosaicLabelMat.metalness = metalness;
+    mosaicLabelMat.roughness = roughness;
+    mosaicLabelMat.envMapIntensity = MYLAR_ENV_BASE * envIntensityScale * uvEnvMult;
+    if (useMirror && mosaicLabelMirrorTex) {
+      // Pre-baked at label aspect — fill once, no crop transform.
+      mosaicLabelMirrorTex.offset.set(0, 0);
+      mosaicLabelMirrorTex.repeat.set(1, 1);
+      mosaicLabelMirrorTex.center.set(0, 0);
+      mosaicLabelMirrorTex.rotation = 0;
+      mosaicLabelMirrorTex.needsUpdate = true;
+    } else if (mosaicLabelTex) {
+      applyMosaicCrop(mosaicLabelTex, resolveMosaicCrop({
+        aspect: jarLabelAspect,
+        zoom: mosaicZoom,
+        offsetU: mosaicOffsetU,
+        offsetV: mosaicOffsetV,
+        flipX: mosaicFlipX,
+        flipY: mosaicFlipY,
+      }));
+      mosaicLabelTex.needsUpdate = true;
+    }
+    mosaicLabelMat.needsUpdate = true;
+  }, [mosaicMirror, mosaicLabelMirrorTex, mosaicLabelTex, jarLabelAspect, mosaicZoom, mosaicOffsetU, mosaicOffsetV, mosaicFlipX, mosaicFlipY, metalness, roughness, envIntensityScale, uvEnvMult, mosaicLabelMat]);
+
+  useEffect(() => {
+    const useMirror = mosaicMirror && layer2MosaicMirrorTex != null;
+    syncMaskedSet(layer2MaskedSet, layer2Tex, layer2Surface, {
+      mosaicTex: useMirror ? layer2MosaicMirrorTex : layer2MosaicTex,
+      artAlpha: layer2ArtAlpha,
+      // Mirror canvas is already label-aspect — pass null so resolveMosaicCrop
+      // collapses to repeat=(1,1) (combined with offsetU/V=0) and the canvas
+      // fills the label once with no tiling.
+      aspect: useMirror ? null : jarLabelAspect,
+      zoom: useMirror ? 1 : mosaicZoom,
+      offsetU: useMirror ? 0 : layer2MosaicOffsetU,
+      offsetV: useMirror ? 0 : layer2MosaicOffsetV,
+      flipX: useMirror ? false : layer2MosaicFlipX,
+      flipY: useMirror ? false : layer2MosaicFlipY,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    mosaicMirror,
+    layer2MosaicMirrorTex,
+    layer2Tex,
+    labelColor,
+    layer2Surface,
+    envIntensityScale,
+    lighting,
+    layer2MaskedSet,
+    holographicTex,
+    layer2MosaicTex,
+    layer2ArtAlpha,
+    jarLabelAspect,
+    mosaicZoom,
+    layer2MosaicOffsetU,
+    layer2MosaicOffsetV,
+    layer2MosaicFlipX,
+    layer2MosaicFlipY,
+  ]);
+
+  useEffect(() => {
+    const useMirror = mosaicMirror && layer3MosaicMirrorTex != null;
+    syncMaskedSet(layer3MaskedSet, layer3Tex, layer3Surface, {
+      mosaicTex: useMirror ? layer3MosaicMirrorTex : layer3MosaicTex,
+      artAlpha: layer3ArtAlpha,
+      aspect: useMirror ? null : jarLabelAspect,
+      zoom: useMirror ? 1 : mosaicZoom,
+      offsetU: useMirror ? 0 : layer3MosaicOffsetU,
+      offsetV: useMirror ? 0 : layer3MosaicOffsetV,
+      flipX: useMirror ? false : layer3MosaicFlipX,
+      flipY: useMirror ? false : layer3MosaicFlipY,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    mosaicMirror,
+    layer3MosaicMirrorTex,
+    layer3Tex,
+    labelColor,
+    layer3Surface,
+    envIntensityScale,
+    lighting,
+    layer3MaskedSet,
+    holographicTex,
+    layer3MosaicTex,
+    layer3ArtAlpha,
+    jarLabelAspect,
+    mosaicZoom,
+    layer3MosaicOffsetU,
+    layer3MosaicOffsetV,
+    layer3MosaicFlipX,
+    layer3MosaicFlipY,
+  ]);
+
+  // Pick the active masked variant for each layer based on ITS OWN finish.
+  // Iridescence > 0 (Multi-Chrome preset) routes to the chrome shader rather
+  // than mylar so the rainbow reads properly. Mosaic falls back to mylar
+  // until both a source image and the artwork alpha are ready.
+  const pickMasked = (
+    set: MaskedSet,
+    surface: LayerSurface,
+    mosaicReady: boolean
+  ): THREE.Material => {
+    if (surface.finish === "foil") return set.foil;
+    if (surface.finish === "prismatic") return set.prismatic;
+    if (surface.finish === "multi-chrome" || surface.iridescence > 0) return set.chrome;
+    if (surface.finish === "mosaic" && mosaicReady) return set.mosaic;
+    return set.mylar;
+  };
+  // Mirror canvases replace the regular clone, so either one suffices
+  // to produce a valid mosaic render. Without this the layer falls
+  // through to the mylar variant (blank label) whenever mirror was
+  // active and the regular clone was skipped.
+  const layer2MosaicReady = !!((layer2MosaicTex || layer2MosaicMirrorTex) && layer2ArtAlpha);
+  const layer3MosaicReady = !!((layer3MosaicTex || layer3MosaicMirrorTex) && layer3ArtAlpha);
+  const layer2Masked = useMemo(
+    () => pickMasked(layer2MaskedSet, layer2Surface, layer2MosaicReady),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layer2Surface, layer2MaskedSet, layer2MosaicReady]
+  );
+  const layer3Masked = useMemo(
+    () => pickMasked(layer3MaskedSet, layer3Surface, layer3MosaicReady),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layer3Surface, layer3MaskedSet, layer3MosaicReady]
+  );
+
+  useEffect(() => {
+    layer3Mat.map = layer3Tex;
+    if (layer3Varnish || layer3Tactile) {
+      layer3Mat.metalness = 0;
+      layer3Mat.roughness = VARNISH_ROUGHNESS;
+      layer3Mat.clearcoat = VARNISH_CLEARCOAT;
+      layer3Mat.clearcoatRoughness = VARNISH_CLEARCOAT_ROUGHNESS;
+      layer3Mat.bumpMap = layer3BumpTex;
+      layer3Mat.bumpScale = VARNISH_BUMP_SCALE;
+    } else {
+      layer3Mat.metalness = layer3Metalness;
+      layer3Mat.roughness = layer3Roughness;
+      layer3Mat.clearcoat = 0;
+      layer3Mat.clearcoatRoughness = 0;
+      layer3Mat.bumpMap = null;
+      layer3Mat.bumpScale = 0;
+    }
+    if (layer3UV && lighting === "uv") {
+      layer3Mat.emissive = new THREE.Color(UV_GLOW_COLOR);
+      layer3Mat.emissiveMap = layer3Tex;
+      layer3Mat.emissiveIntensity = 6.5;
+    } else {
+      layer3Mat.emissive = new THREE.Color(0x000000);
+      layer3Mat.emissiveMap = null;
+      layer3Mat.emissiveIntensity = 1;
+    }
+    layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3Mat.needsUpdate = true;
+  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, layer3Mat, layer3UV, lighting]);
+
+  // ── Scene processing (body + label) ───────────────────────────────────────
+  // Body: hide the old glb's built-in label (any non-Plastic primitive) and
+  // swap our plastic material in over the remaining body/lid meshes.
+  const processedBodyScene = useMemo(() => {
+    const clone = bodyScene.clone(true);
+    clone.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (!m.isMesh || !m.geometry) return;
+      const mat = m.material as THREE.Material | undefined;
+      if (mat?.name === "Plastic") {
+        m.castShadow = true;
+        m.receiveShadow = true;
+      } else {
+        m.visible = false;
+      }
+    });
+    return clone;
+  }, [bodyScene]);
+
+  // Keep the plastic material assignment reactive so env-scale updates land.
+  useEffect(() => {
+    processedBodyScene.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (!m.isMesh || !m.visible) return;
+      m.material = plasticMat;
+    });
+  }, [processedBodyScene, plasticMat]);
 
   // ── Autofit ───────────────────────────────────────────────────────────────
   // Target height 1.0 units — the jar is wider than it is tall, so even with

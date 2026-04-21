@@ -243,6 +243,25 @@ export default function OutreachBagViewer({
       finish={mat.finish}
       envIntensityScale={dimScale}
       floating={env !== "smoke"}
+      // Mosaic — the shared source image URL travels on the material, and
+      // per-layer crop seeds persist so the saved look reproduces exactly.
+      // Undefined fields fall through to the prop defaults (0 seed), which
+      // still render a valid crop when mosaic isn't in use on that layer.
+      mosaicSourceUrl={mat.mosaicSourceImageUrl ?? null}
+      mosaicMirror={mat.mosaicMirror}
+      mosaicZoom={mat.mosaicZoom}
+      mosaicOffsetU={mat.mosaicOffsetU}
+      mosaicOffsetV={mat.mosaicOffsetV}
+      mosaicFlipX={mat.mosaicFlipX}
+      mosaicFlipY={mat.mosaicFlipY}
+      labelMosaicOffsetU={mat.labelMosaicOffsetU}
+      labelMosaicOffsetV={mat.labelMosaicOffsetV}
+      labelMosaicFlipX={mat.labelMosaicFlipX}
+      labelMosaicFlipY={mat.labelMosaicFlipY}
+      layer3MosaicOffsetU={mat.layer3MosaicOffsetU}
+      layer3MosaicOffsetV={mat.layer3MosaicOffsetV}
+      layer3MosaicFlipX={mat.layer3MosaicFlipX}
+      layer3MosaicFlipY={mat.layer3MosaicFlipY}
     />
   );
 
