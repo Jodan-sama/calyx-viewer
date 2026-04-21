@@ -38,6 +38,23 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
+// Tactile tuning — matches BagMesh. Semi-gloss surface + stronger bump;
+// the JSX raises the decal mesh radially via a small scale bump so the
+// label wraps the jar slightly outward, reading as thickness.
+const TACTILE_BUMP_SCALE = 0.022;
+const TACTILE_CLEARCOAT = 0.55;
+const TACTILE_CLEARCOAT_ROUGHNESS = 0.32;
+const TACTILE_ROUGHNESS = 0.45;
+/** Uniform scale multiplier for the label mesh when Tactile is on. The
+ *  label geometry wraps a cylinder so there is no single "outward" axis
+ *  — scaling pushes every vertex outward from the jar's local origin,
+ *  which is close enough to radial to read as raised thickness. 1.004
+ *  ≈ 0.4% expansion (a fraction of a millimetre at final size). */
+const TACTILE_JAR_SCALE = 1.004;
+/** Layer 3's extra bump on top of Layer 2, so stacked-tactile still reads
+ *  in order without the two layers sharing a depth slice. */
+const TACTILE_JAR_SCALE_LAYER3 = 1.006;
+
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
  *  surface where the artwork is actually opaque. */
@@ -91,6 +108,11 @@ interface SupplementJarMeshProps {
   layer2Roughness: number;
   /** Clear-gloss overprint on Layer 2 artwork. */
   layer2Varnish?: boolean;
+  /** Tactile finish on Layer 2 — semi-gloss, stronger bump, and a small
+   *  radial raise so the label sits visibly above the jar surface.
+   *  Mutually exclusive with `layer2Varnish` and `layer2Material` in the
+   *  UI; tactile wins if two are on together. */
+  layer2Tactile?: boolean;
   /** When true, Layer 2's artwork becomes a mask — every opaque pixel shows
    *  the Material finish selected for *this layer* (see `layer2MatFinish`)
    *  rather than the artwork image itself. Effectively turns the artwork
@@ -111,6 +133,8 @@ interface SupplementJarMeshProps {
   layer3Roughness: number;
   /** Clear-gloss overprint on Layer 3 artwork. */
   layer3Varnish?: boolean;
+  /** Tactile finish on Layer 3 — see `layer2Tactile`. */
+  layer3Tactile?: boolean;
   /** When true, Layer 3's artwork becomes a Surface-finish cutout — same
    *  rules as `layer2Material`. */
   layer3Material?: boolean;
@@ -320,6 +344,7 @@ export default function SupplementJarMesh({
   layer2Metalness,
   layer2Roughness,
   layer2Varnish = false,
+  layer2Tactile = false,
   layer2Material = false,
   layer2MatFinish,
   layer2MatMetalness,
@@ -328,6 +353,7 @@ export default function SupplementJarMesh({
   layer3Metalness,
   layer3Roughness,
   layer3Varnish = false,
+  layer3Tactile = false,
   layer3Material = false,
   layer3MatFinish,
   layer3MatMetalness,
@@ -762,7 +788,17 @@ export default function SupplementJarMesh({
   // is ON the mesh picks up `layer2Masked` instead.
   useEffect(() => {
     layer2Mat.map = layer2Tex;
-    if (layer2Varnish) {
+    // Precedence: tactile > varnish > plain. Tactile is paired with a
+    // small radial scale bump on the mesh (see JSX) so the raised look
+    // reads as thickness, not just shading.
+    if (layer2Tactile) {
+      layer2Mat.metalness = 0;
+      layer2Mat.roughness = TACTILE_ROUGHNESS;
+      layer2Mat.clearcoat = TACTILE_CLEARCOAT;
+      layer2Mat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
+      layer2Mat.bumpMap = layer2BumpTex;
+      layer2Mat.bumpScale = TACTILE_BUMP_SCALE;
+    } else if (layer2Varnish) {
       layer2Mat.metalness = 0;
       layer2Mat.roughness = VARNISH_ROUGHNESS;
       layer2Mat.clearcoat = VARNISH_CLEARCOAT;
@@ -788,7 +824,7 @@ export default function SupplementJarMesh({
     }
     layer2Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer2Mat.needsUpdate = true;
-  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, envIntensityScale, layer2Mat, layer2UV, lighting]);
+  }, [layer2Tex, layer2BumpTex, layer2Metalness, layer2Roughness, layer2Varnish, layer2Tactile, envIntensityScale, layer2Mat, layer2UV, lighting]);
 
   // Resolve the effective Material-mode surface for a given layer. Each
   // layer can override Layer 1's finish via `matFinish`; when omitted or set
@@ -945,7 +981,14 @@ export default function SupplementJarMesh({
 
   useEffect(() => {
     layer3Mat.map = layer3Tex;
-    if (layer3Varnish) {
+    if (layer3Tactile) {
+      layer3Mat.metalness = 0;
+      layer3Mat.roughness = TACTILE_ROUGHNESS;
+      layer3Mat.clearcoat = TACTILE_CLEARCOAT;
+      layer3Mat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
+      layer3Mat.bumpMap = layer3BumpTex;
+      layer3Mat.bumpScale = TACTILE_BUMP_SCALE;
+    } else if (layer3Varnish) {
       layer3Mat.metalness = 0;
       layer3Mat.roughness = VARNISH_ROUGHNESS;
       layer3Mat.clearcoat = VARNISH_CLEARCOAT;
@@ -971,7 +1014,7 @@ export default function SupplementJarMesh({
     }
     layer3Mat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer3Mat.needsUpdate = true;
-  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, layer3Mat, layer3UV, lighting]);
+  }, [layer3Tex, layer3BumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, layer3Mat, layer3UV, lighting]);
 
   // ── Scene processing (body + label) ───────────────────────────────────────
   // Body: hide the old glb's built-in label (any non-Plastic primitive) and
@@ -1165,22 +1208,33 @@ export default function SupplementJarMesh({
            cuts out the current Layer 1 finish (foil/prismatic/chrome/
            matte/…) instead of painting the artwork pixels themselves. With
            Material OFF it's a standard transparent artwork decal (Varnish
-           optionally applies a clearcoat overprint). */}
+           optionally applies a clearcoat overprint; Tactile applies a
+           semi-gloss overprint AND a small radial scale bump so the label
+           wraps slightly outward — it reads as physical thickness at
+           grazing angles). */}
       {layer2Tex && (
         <mesh
           geometry={labelGeo}
           material={layer2Material ? layer2Masked : layer2Mat}
           renderOrder={1}
+          scale={layer2Tactile
+            ? [TACTILE_JAR_SCALE, TACTILE_JAR_SCALE, TACTILE_JAR_SCALE]
+            : [1, 1, 1]}
         />
       )}
 
       {/* Layer 3 — same behavior as Layer 2, one render order higher so it
-           always reads on top when overlapping. */}
+           always reads on top when overlapping. Tactile here scales a
+           touch more than Layer 2 tactile so stacked-tactile layers
+           still read in order. */}
       {layer3Tex && (
         <mesh
           geometry={labelGeo}
           material={layer3Material ? layer3Masked : layer3Mat}
           renderOrder={3}
+          scale={layer3Tactile
+            ? [TACTILE_JAR_SCALE_LAYER3, TACTILE_JAR_SCALE_LAYER3, TACTILE_JAR_SCALE_LAYER3]
+            : [1, 1, 1]}
         />
       )}
     </group>

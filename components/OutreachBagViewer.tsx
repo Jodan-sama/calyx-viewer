@@ -214,6 +214,7 @@ export default function OutreachBagViewer({
       labelMetalness={mat.labelMetalness}
       labelRoughness={mat.labelRoughness}
       labelVarnish={mat.labelVarnish ?? false}
+      labelTactile={mat.labelTactile ?? false}
       labelMaterial={mat.labelMaterial ?? false}
       // Per-layer Material finish reproduces the same cutout the user saw
       // at save time. Undefined → BagMesh falls back to Layer 1's finish,
@@ -229,6 +230,7 @@ export default function OutreachBagViewer({
       layer3Metalness={mat.layer3Metalness}
       layer3Roughness={mat.layer3Roughness}
       layer3Varnish={mat.layer3Varnish ?? false}
+      layer3Tactile={mat.layer3Tactile ?? false}
       layer3Material={mat.layer3Material ?? false}
       layer3MatFinish={mat.layer3MatFinish}
       layer3MatMetalness={mat.layer3MatMetalness}

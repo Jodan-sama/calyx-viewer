@@ -29,6 +29,12 @@ interface BagMeshProps {
    *  with a tiny alpha-derived bump — only raised where the artwork is
    *  opaque. Background bag surface is unaffected. */
   labelVarnish?: boolean;
+  /** When true, the label becomes a "tactile" finish — lower shine than
+   *  varnish, stronger bump, and a physical z-offset so the decal mesh
+   *  sits visibly above the surrounding layers. Mimics raised-UV /
+   *  soft-touch print finishes. Takes precedence over `labelVarnish` if
+   *  both are somehow on. */
+  labelTactile?: boolean;
   /** When true, Layer 2's artwork alpha becomes a mask and the opaque
    *  pixels paint with the Material finish selected for *this layer* (see
    *  `labelMatFinish`) rather than the artwork's RGB values. */
@@ -49,6 +55,8 @@ interface BagMeshProps {
   layer3Metalness?: number;
   layer3Roughness?: number;
   layer3Varnish?: boolean;
+  /** See `labelTactile`; same rules, Layer 3 flavour. */
+  layer3Tactile?: boolean;
   layer3Material?: boolean;
   /** Per-layer Material finish for Layer 3. Falls back to Layer 1's finish. */
   layer3MatFinish?: BagFinish;
@@ -100,6 +108,21 @@ const VARNISH_BUMP_SCALE = 0.008;
 const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
+
+// Tactile tuning — stronger bump than varnish, softer shine (semi-gloss
+// rather than mirror clearcoat), plus a small physical z-offset applied
+// to the decal mesh in the JSX so the layer sits *above* varnish/plain
+// layers that share the same panel geometry. Mimics the feel of raised
+// UV print / soft-touch spot coating.
+const TACTILE_BUMP_SCALE = 0.022;
+const TACTILE_CLEARCOAT = 0.55;
+const TACTILE_CLEARCOAT_ROUGHNESS = 0.32;
+const TACTILE_ROUGHNESS = 0.45;
+/** Local-space raise along the panel normal. The group is scaled 5.5× so
+ *  0.003 → ~0.0165 world units — enough to read as thickness at grazing
+ *  angles without looking detached from the bag surface. Front panels
+ *  use +Z, back panels −Z (see centroid-Z filter above). */
+const TACTILE_Z_OFFSET = 0.003;
 
 /** Builds a greyscale CanvasTexture whose pixel brightness equals the source
  *  texture's alpha channel, so it can be plugged straight into MeshPhysical
@@ -367,6 +390,7 @@ export default function BagMesh({
   iridescenceThicknessRange = [100, 800],
   finish = "",
   labelVarnish = false,
+  labelTactile = false,
   labelMaterial = false,
   labelMatFinish,
   labelMatMetalness,
@@ -376,6 +400,7 @@ export default function BagMesh({
   layer3Metalness = 0.1,
   layer3Roughness = 0.5,
   layer3Varnish = false,
+  layer3Tactile = false,
   layer3Material = false,
   layer3MatFinish,
   layer3MatMetalness,
@@ -727,7 +752,18 @@ export default function BagMesh({
   useEffect(() => {
     frontLabelMat.map = frontLabelTex;
     frontLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (labelVarnish) {
+    // Precedence: tactile > varnish > plain. Tactile pairs with a physical
+    // z-offset on the mesh itself (see JSX below) so the raised look reads
+    // as real thickness, not just shading. Varnish is the legacy glossy
+    // overprint. Plain uses the user's per-layer metalness/roughness.
+    if (labelTactile) {
+      frontLabelMat.metalness = 0;
+      frontLabelMat.roughness = TACTILE_ROUGHNESS;
+      frontLabelMat.clearcoat = TACTILE_CLEARCOAT;
+      frontLabelMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
+      frontLabelMat.bumpMap = frontBumpTex;
+      frontLabelMat.bumpScale = TACTILE_BUMP_SCALE;
+    } else if (labelVarnish) {
       frontLabelMat.metalness = 0;
       frontLabelMat.roughness = VARNISH_ROUGHNESS;
       frontLabelMat.clearcoat = VARNISH_CLEARCOAT;
@@ -756,12 +792,19 @@ export default function BagMesh({
       frontLabelMat.emissiveIntensity = 1;
     }
     frontLabelMat.needsUpdate = true;
-  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, uvEnvMult, frontLabelMat, labelUV, lighting]);
+  }, [frontLabelTex, frontBumpTex, labelMetalness, labelRoughness, labelVarnish, labelTactile, envIntensityScale, uvEnvMult, frontLabelMat, labelUV, lighting]);
 
   useEffect(() => {
     backLabelMat.map = backLabelTex;
     backLabelMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (labelVarnish) {
+    if (labelTactile) {
+      backLabelMat.metalness = 0;
+      backLabelMat.roughness = TACTILE_ROUGHNESS;
+      backLabelMat.clearcoat = TACTILE_CLEARCOAT;
+      backLabelMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
+      backLabelMat.bumpMap = backBumpTex;
+      backLabelMat.bumpScale = TACTILE_BUMP_SCALE;
+    } else if (labelVarnish) {
       backLabelMat.metalness = 0;
       backLabelMat.roughness = VARNISH_ROUGHNESS;
       backLabelMat.clearcoat = VARNISH_CLEARCOAT;
@@ -786,7 +829,7 @@ export default function BagMesh({
       backLabelMat.emissiveIntensity = 1;
     }
     backLabelMat.needsUpdate = true;
-  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, envIntensityScale, uvEnvMult, backLabelMat, labelUV, lighting]);
+  }, [backLabelTex, backBumpTex, labelMetalness, labelRoughness, labelVarnish, labelTactile, envIntensityScale, uvEnvMult, backLabelMat, labelUV, lighting]);
 
   // ── Layer 3 — optional second decal layer (front + back) ─────────────────
   // Mirrors Layer 2 exactly: independent textures, alpha-bump maps driving a
@@ -853,7 +896,14 @@ export default function BagMesh({
   useEffect(() => {
     layer3FrontMat.map = layer3FrontTex;
     layer3FrontMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (layer3Varnish) {
+    if (layer3Tactile) {
+      layer3FrontMat.metalness = 0;
+      layer3FrontMat.roughness = TACTILE_ROUGHNESS;
+      layer3FrontMat.clearcoat = TACTILE_CLEARCOAT;
+      layer3FrontMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
+      layer3FrontMat.bumpMap = layer3FrontBumpTex;
+      layer3FrontMat.bumpScale = TACTILE_BUMP_SCALE;
+    } else if (layer3Varnish) {
       layer3FrontMat.metalness = 0;
       layer3FrontMat.roughness = VARNISH_ROUGHNESS;
       layer3FrontMat.clearcoat = VARNISH_CLEARCOAT;
@@ -878,12 +928,19 @@ export default function BagMesh({
       layer3FrontMat.emissiveIntensity = 1;
     }
     layer3FrontMat.needsUpdate = true;
-  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, uvEnvMult, layer3FrontMat, layer3UV, lighting]);
+  }, [layer3FrontTex, layer3FrontBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, uvEnvMult, layer3FrontMat, layer3UV, lighting]);
 
   useEffect(() => {
     layer3BackMat.map = layer3BackTex;
     layer3BackMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    if (layer3Varnish) {
+    if (layer3Tactile) {
+      layer3BackMat.metalness = 0;
+      layer3BackMat.roughness = TACTILE_ROUGHNESS;
+      layer3BackMat.clearcoat = TACTILE_CLEARCOAT;
+      layer3BackMat.clearcoatRoughness = TACTILE_CLEARCOAT_ROUGHNESS;
+      layer3BackMat.bumpMap = layer3BackBumpTex;
+      layer3BackMat.bumpScale = TACTILE_BUMP_SCALE;
+    } else if (layer3Varnish) {
       layer3BackMat.metalness = 0;
       layer3BackMat.roughness = VARNISH_ROUGHNESS;
       layer3BackMat.clearcoat = VARNISH_CLEARCOAT;
@@ -908,7 +965,7 @@ export default function BagMesh({
       layer3BackMat.emissiveIntensity = 1;
     }
     layer3BackMat.needsUpdate = true;
-  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, envIntensityScale, uvEnvMult, layer3BackMat, layer3UV, lighting]);
+  }, [layer3BackTex, layer3BackBumpTex, layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, envIntensityScale, uvEnvMult, layer3BackMat, layer3UV, lighting]);
 
   // ── Material-mode masked variants (Layer 2 + Layer 3, front + back) ──────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
@@ -1232,12 +1289,15 @@ export default function BagMesh({
            artwork's alpha cuts out the current base finish (foil / prismatic
            / multi-chrome / matte / …) instead of painting the PNG's RGB
            directly. With Material OFF it's a standard transparent artwork
-           decal (Varnish optionally adds a clear-gloss overprint). */}
+           decal (Varnish optionally adds a clear-gloss overprint; Tactile
+           adds a semi-gloss overprint AND physically nudges the mesh
+           outward along the panel normal so the layer reads as raised). */}
       {frontLabelGeo && frontLabelTex && (
         <mesh
           geometry={frontLabelGeo}
           material={labelMaterial ? layer2FrontMasked : frontLabelMat}
           renderOrder={1}
+          position={labelTactile ? [0, 0, TACTILE_Z_OFFSET] : [0, 0, 0]}
         />
       )}
       {backLabelGeo && backLabelTex && (
@@ -1245,17 +1305,21 @@ export default function BagMesh({
           geometry={backLabelGeo}
           material={labelMaterial ? layer2BackMasked : backLabelMat}
           renderOrder={1}
+          position={labelTactile ? [0, 0, -TACTILE_Z_OFFSET] : [0, 0, 0]}
         />
       )}
 
       {/* Layer 3 — optional second artwork layer. Same rules as Layer 2 but
            rendered one polygon-offset step deeper so it sits on top when
-           the two layers overlap. */}
+           the two layers overlap. Tactile uses a slightly larger z-offset
+           than Layer 2 tactile so stacked-tactile layers still read in
+           order. */}
       {frontLabelGeo && layer3FrontTex && (
         <mesh
           geometry={frontLabelGeo}
           material={layer3Material ? layer3FrontMasked : layer3FrontMat}
           renderOrder={2}
+          position={layer3Tactile ? [0, 0, TACTILE_Z_OFFSET * 1.3] : [0, 0, 0]}
         />
       )}
       {backLabelGeo && layer3BackTex && (
@@ -1263,6 +1327,7 @@ export default function BagMesh({
           geometry={backLabelGeo}
           material={layer3Material ? layer3BackMasked : layer3BackMat}
           renderOrder={2}
+          position={layer3Tactile ? [0, 0, -TACTILE_Z_OFFSET * 1.3] : [0, 0, 0]}
         />
       )}
     </group>

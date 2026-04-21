@@ -80,6 +80,13 @@ export interface BagMaterial {
    *  alpha-derived bump so the artwork reads as a raised, high-shine
    *  overprint. Optional for backwards-compatibility with existing saves. */
   labelVarnish?: boolean;
+  /** When true, the label artwork gets a "tactile" finish — like varnish
+   *  but with lower shine, a stronger bump, AND a physical z-offset that
+   *  raises the decal mesh above the surrounding layers. Mutually
+   *  exclusive with `labelVarnish` and `labelMaterial` in the UI; if two
+   *  are somehow toggled on together, tactile takes precedence in the
+   *  render. Optional for backwards-compatibility with existing saves. */
+  labelTactile?: boolean;
   /** When true, the label artwork's alpha is used as a mask and the opaque
    *  pixels paint with the per-layer Material finish (see `labelMatFinish`
    *  below) instead of the artwork's RGB values. Optional for backwards-
@@ -99,6 +106,7 @@ export interface BagMaterial {
   layer2Metalness?: number;
   layer2Roughness?: number;
   layer2Varnish?: boolean;
+  layer2Tactile?: boolean;
   layer2Material?: boolean;
   layer2MatFinish?: BagFinish;
   layer2MatMetalness?: number;
@@ -108,6 +116,7 @@ export interface BagMaterial {
   layer3Metalness?: number;
   layer3Roughness?: number;
   layer3Varnish?: boolean;
+  layer3Tactile?: boolean;
   layer3Material?: boolean;
   layer3MatFinish?: BagFinish;
   layer3MatMetalness?: number;
@@ -182,6 +191,7 @@ export const DEFAULT_MATERIAL: BagMaterial = {
   labelRoughness: 0.55,
   lighting: "studio",
   labelVarnish: false,
+  labelTactile: false,
   labelMaterial: false,
 };
 
