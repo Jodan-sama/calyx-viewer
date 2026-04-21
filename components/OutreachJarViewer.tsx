@@ -26,6 +26,8 @@ import {
   resolveWrapperBackground,
 } from "./CustomLightRig";
 import type { SceneEnvironment } from "@/lib/types";
+import { useIsMobile } from "@/lib/useIsMobile";
+import { useInViewport } from "@/lib/useInViewport";
 
 interface Props {
   /** The label artwork to map onto the jar's body label (Layer 2). */
@@ -109,13 +111,15 @@ function SmokeLights() {
   );
 }
 
-function ReflectiveFloor() {
+function ReflectiveFloor({ mobile }: { mobile: boolean }) {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
         blur={[35, 12]}
-        resolution={2048}
+        // See matching comment in OutreachBagViewer.tsx — 2048² is too
+        // heavy for mobile framebuffers to sit alongside everything else.
+        resolution={mobile ? 512 : 2048}
         mixBlur={0.25}
         mixStrength={12.0}
         roughness={0.05}
@@ -237,6 +241,11 @@ export default function OutreachJarViewer({
     />
   );
 
+  // Mobile performance overrides — see OutreachBagViewer for rationale.
+  const isMobile = useIsMobile();
+  const outerRef = useRef<HTMLDivElement>(null);
+  const inViewport = useInViewport(outerRef);
+
   // Play back the user's full rig when the slot was saved with one.
   const customRig = hasCustomRig(mat);
   const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
@@ -256,7 +265,9 @@ export default function OutreachJarViewer({
     <Canvas
       camera={{ position: [0, -0.3, 4.5], fov: 42 }}
       gl={{
-        antialias: true,
+        // See OutreachBagViewer for the full rationale on each of
+        // these mobile overrides.
+        antialias: !isMobile,
         toneMapping: customRig
           ? resolveToneMapping(mat.toneMappingCurve)
           : THREE.ACESFilmicToneMapping,
@@ -265,7 +276,8 @@ export default function OutreachJarViewer({
           : 1.4,
       }}
       shadows
-      dpr={[1, 2]}
+      dpr={isMobile ? [1, 1.5] : [1, 2]}
+      frameloop={inViewport ? "always" : "demand"}
       style={{
         width: "100%",
         height: "100%",
@@ -295,6 +307,7 @@ export default function OutreachJarViewer({
           <Environment
             preset="studio"
             background={false}
+            resolution={isMobile ? 128 : 256}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : 0.22
             }
@@ -306,6 +319,7 @@ export default function OutreachJarViewer({
         ) : (
           <Environment
             preset={envPreset}
+            resolution={isMobile ? 128 : 256}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : dimScale
             }
@@ -339,7 +353,7 @@ export default function OutreachJarViewer({
         )}
 
         {isSmoke ? (
-          <ReflectiveFloor />
+          <ReflectiveFloor mobile={isMobile} />
         ) : (
           <ContactShadows
             position={[0, -1.28, 0]}
@@ -367,18 +381,18 @@ export default function OutreachJarViewer({
     </Canvas>
   );
 
-  if (gradientBg) {
-    return (
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: gradientBg,
-        }}
-      >
-        {canvas}
-      </div>
-    );
-  }
-  return canvas;
+  // Always wrap in a positioned div so the IntersectionObserver has a
+  // box to watch. Gradient bg paints on the same wrapper when needed.
+  return (
+    <div
+      ref={outerRef}
+      style={{
+        position: "absolute",
+        inset: 0,
+        ...(gradientBg ? { background: gradientBg } : {}),
+      }}
+    >
+      {canvas}
+    </div>
+  );
 }

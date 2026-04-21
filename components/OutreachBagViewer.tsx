@@ -28,6 +28,8 @@ import {
   resolveWrapperBackground,
 } from "./CustomLightRig";
 import type { SceneEnvironment } from "@/lib/types";
+import { useIsMobile } from "@/lib/useIsMobile";
+import { useInViewport } from "@/lib/useInViewport";
 
 interface Props {
   /** Front-panel artwork. Null → default Calyx bag front. */
@@ -111,13 +113,18 @@ function SmokeLights() {
   );
 }
 
-function ReflectiveFloor() {
+function ReflectiveFloor({ mobile }: { mobile: boolean }) {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.265, 0]} receiveShadow>
       <planeGeometry args={[40, 40]} />
       <MeshReflectorMaterial
         blur={[35, 12]}
-        resolution={2048}
+        // 2048² reflection render-target = ~16 MB VRAM. Mobile can't
+        // afford that alongside the main framebuffer + HDRI mipmaps,
+        // so we quarter-resolution on narrow viewports. The blur pass
+        // hides the lower resolution well enough to read as the same
+        // mirror floor at typical viewing angles.
+        resolution={mobile ? 512 : 2048}
         mixBlur={0.25}
         mixStrength={12.0}
         roughness={0.05}
@@ -251,6 +258,15 @@ export default function OutreachBagViewer({
   // preset-based lighting so older slots keep rendering the way they
   // always did. The sentinel is `mat.rectCount !== undefined` — present
   // iff BagViewer's full-rig emit touched the material.
+  // Mobile performance overrides. Cap DPR, drop MSAA, shrink the HDRI
+  // cubemap + reflector render target, and pause the render loop when
+  // the slot scrolls out of viewport. The outer wrapper below owns the
+  // IntersectionObserver ref so the observed box matches what the user
+  // sees on screen.
+  const isMobile = useIsMobile();
+  const outerRef = useRef<HTMLDivElement>(null);
+  const inViewport = useInViewport(outerRef);
+
   const customRig = hasCustomRig(mat);
   const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
   // UV Blacklight forces a near-black scene regardless of the slot's
@@ -272,7 +288,12 @@ export default function OutreachBagViewer({
     <Canvas
       camera={{ position: [0, -0.3, 4.5], fov: 42 }}
       gl={{
-        antialias: true,
+        // MSAA 4× is the default when antialias is on. On retina
+        // mobile that's 33 megasamples per frame per slot — the
+        // single biggest fillrate cost on the client surface. Drop
+        // it on mobile; the small visual gain isn't worth the
+        // crashes on mid-tier phones.
+        antialias: !isMobile,
         toneMapping: customRig
           ? resolveToneMapping(mat.toneMappingCurve)
           : THREE.ACESFilmicToneMapping,
@@ -283,7 +304,19 @@ export default function OutreachBagViewer({
             : 1.4,
       }}
       shadows
-      dpr={[1, 2]}
+      // Retina DPR = 2 yields a 4× pixel count vs DPR = 1. 1.5 is
+      // the perceptual-equivalence point on phones (at 5-6" screens
+      // you can't resolve the difference between 1.5 and 2), so
+      // capping here buys ~30% fillrate with no visible penalty.
+      dpr={isMobile ? [1, 1.5] : [1, 2]}
+      // "demand" only re-renders when something in the scene
+      // changes; "always" re-renders at 60 fps. Off-screen slots
+      // have no reason to run at 60 fps, so we flip them to demand
+      // and the GPU idles instead of burning power on an invisible
+      // framebuffer. Flips back to "always" the moment the slot
+      // scrolls into view (with a 200 px rootMargin pre-warm so the
+      // first frame is ready before it lands on screen).
+      frameloop={inViewport ? "always" : "demand"}
       style={{
         width: "100%",
         height: "100%",
@@ -316,6 +349,10 @@ export default function OutreachBagViewer({
           <Environment
             preset="studio"
             background={false}
+            // Shrink the precomputed PMREM cubemap on mobile. Default
+            // is 256²; 128² drops VRAM ~4× and the difference is
+            // invisible on the small mobile tiles.
+            resolution={isMobile ? 128 : 256}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : 0.22
             }
@@ -329,6 +366,7 @@ export default function OutreachBagViewer({
         ) : (
           <Environment
             preset={resolveEnvironmentPreset(mat.lighting)}
+            resolution={isMobile ? 128 : 256}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : dimScale
             }
@@ -372,7 +410,7 @@ export default function OutreachBagViewer({
         )}
 
         {isSmoke ? (
-          <ReflectiveFloor />
+          <ReflectiveFloor mobile={isMobile} />
         ) : (
           <ContactShadows
             position={[0, -1.28, 0]}
@@ -400,21 +438,20 @@ export default function OutreachBagViewer({
     </Canvas>
   );
 
-  // Wrapper only when we need a gradient background painted under an
-  // otherwise-alpha Canvas. Flat backgrounds go through scene <color>
-  // (no wrapper); transparent skips both so the page bg shows through.
-  if (gradientBg) {
-    return (
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: gradientBg,
-        }}
-      >
-        {canvas}
-      </div>
-    );
-  }
-  return canvas;
+  // Always wrap in a positioned div so the IntersectionObserver ref
+  // attaches to the slot's on-screen box. Gradient background (when
+  // needed) paints on this same wrapper; otherwise the wrapper is
+  // transparent and only exists to host the ref.
+  return (
+    <div
+      ref={outerRef}
+      style={{
+        position: "absolute",
+        inset: 0,
+        ...(gradientBg ? { background: gradientBg } : {}),
+      }}
+    >
+      {canvas}
+    </div>
+  );
 }
