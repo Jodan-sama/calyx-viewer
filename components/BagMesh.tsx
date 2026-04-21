@@ -125,25 +125,28 @@ const VARNISH_ROUGHNESS = 0.05;
 // Net result: a single clear-glass solid with curved top edges,
 // following the artwork's footprint — no stacked-shell blur.
 /** Max triangle edge length (bag-local units) the tessellator will
- *  accept before subdividing. Smaller = denser = smoother displacement
- *  at the cost of more verts. 0.012 ≈ ~80 subdivs across a 1-unit
- *  panel — plenty for the bevel + displacement to read cleanly. */
-const TACTILE_MAX_EDGE = 0.012;
-/** Gaussian blur radius (in source-image pixels) applied to the alpha
- *  before it becomes a displacementMap. This is what creates the
- *  curved bevel — hard-edged alpha displaces straight up into a
- *  vertical wall, blurred alpha ramps outward into a dome. 8px at a
- *  1024-wide artwork ≈ 0.8% of panel width. */
-const TACTILE_DISPLACE_BLUR_PX = 10;
+ *  accept before subdividing. Smaller = denser = smoother bevel at
+ *  the cost of more verts. 0.007 ≈ ~140 subdivs across a 1-unit
+ *  panel — high enough to suppress the stair-stepping at the raised
+ *  edges that shows up at 0.012. */
+const TACTILE_MAX_EDGE = 0.007;
+/** Gaussian blur radius (source-image pixels) applied to the alpha
+ *  before it becomes a displacementMap. Larger radius = softer ramp
+ *  = more rounded bevel. 16px at a 1024-wide artwork ≈ 1.6% of panel
+ *  width — enough for a visibly curved shoulder without eating into
+ *  the artwork's footprint. */
+const TACTILE_DISPLACE_BLUR_PX = 16;
 /** Peak raise above the panel, in group-local units (group is scaled
  *  5.5×). Displacement runs along the vertex normal, which points
  *  outward from the bag surface on both panels — no sign flip
- *  required per side. */
-const TACTILE_DISPLACE_SCALE = 0.004;
-/** Clear-varnish material tuning. Low opacity keeps the puck
- *  transparent so the printed artwork reads through; the clearcoat +
- *  low roughness give it the sharp glossy top catch-light. */
-const TACTILE_OPACITY = 0.12;
+ *  required per side. Cut from 0.004 — previous setting read as way
+ *  too thick. */
+const TACTILE_DISPLACE_SCALE = 0.002;
+/** Clear-varnish material tuning. Slightly opaque so the puck
+ *  registers as a material on top of the artwork, not a heat-haze
+ *  shimmer — but the clearcoat + low roughness keep the top surface
+ *  sharply glossy. */
+const TACTILE_OPACITY = 0.3;
 const TACTILE_ROUGHNESS = 0.02;
 const TACTILE_CLEARCOAT = 1.0;
 const TACTILE_CLEARCOAT_ROUGHNESS = 0.02;
@@ -818,7 +821,7 @@ export default function BagMesh({
       clearcoatRoughness: TACTILE_CLEARCOAT_ROUGHNESS,
       opacity: TACTILE_OPACITY,
       transparent: true,
-      alphaTest: 0.05,
+      alphaTest: 0.02,
       side: THREE.FrontSide,
       envMapIntensity: TACTILE_ENV_BASE,
       displacementScale: TACTILE_DISPLACE_SCALE,
@@ -1056,7 +1059,7 @@ export default function BagMesh({
       clearcoatRoughness: TACTILE_CLEARCOAT_ROUGHNESS,
       opacity: TACTILE_OPACITY,
       transparent: true,
-      alphaTest: 0.05,
+      alphaTest: 0.02,
       side: THREE.FrontSide,
       envMapIntensity: TACTILE_ENV_BASE,
       displacementScale: TACTILE_DISPLACE_SCALE,

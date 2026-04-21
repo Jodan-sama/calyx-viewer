@@ -41,15 +41,18 @@ const VARNISH_ROUGHNESS = 0.05;
 
 // Tactile tuning — matches BagMesh. Single solid mesh per label; the
 // artwork stays flat against the jar and the puck raises via vertex
-// displacement along the cylinder's radial normal. Blurred alpha as
-// the displacement source gives the puck a curved bevelled edge.
-const TACTILE_MAX_EDGE = 0.015;
-const TACTILE_DISPLACE_BLUR_PX = 10;
-/** Peak raise along the vertex normal in jar-local units. Smaller than
- *  the bag's 0.004 because the jar's target scale is ≈ 1.0 (vs bag's
- *  5.5×), so the displacement is already world-scale. */
-const TACTILE_DISPLACE_SCALE = 0.008;
-const TACTILE_OPACITY = 0.12;
+// displacement along the cylinder's radial normal (force-assigned to
+// the tessellated geometry — see `setRadialNormals` below). Blurred
+// alpha as the displacement source gives the puck a curved bevelled
+// edge. Density + blur mirror BagMesh so both products match.
+const TACTILE_MAX_EDGE = 0.008;
+const TACTILE_DISPLACE_BLUR_PX = 16;
+/** Peak raise along the vertex normal in jar-local units. Very small
+ *  because the jar's group multiplies mesh units by `targetScale`
+ *  (≈ 6–8), so the same local displacement reads much thicker on the
+ *  jar than on the 5.5×-scaled bag. 0.0015 local ≈ ~0.01 world. */
+const TACTILE_DISPLACE_SCALE = 0.0015;
+const TACTILE_OPACITY = 0.3;
 const TACTILE_ROUGHNESS = 0.02;
 const TACTILE_CLEARCOAT = 1.0;
 const TACTILE_CLEARCOAT_ROUGHNESS = 0.02;
@@ -58,6 +61,27 @@ const TACTILE_ENV_BASE = 1.35;
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
  *  surface where the artwork is actually opaque. */
+/** Overwrite the normal attribute on a cylinder-wrapped geometry so
+ *  every vertex's normal points purely radially outward from the
+ *  cylinder's central Y-axis. Without this, `computeVertexNormals`
+ *  (or interpolation after TessellateModifier) can leave some
+ *  vertices with near-axial normals — which causes the displacement
+ *  vector to shoot those vertices up/down the jar instead of out,
+ *  producing the "streaks everywhere" artefact. */
+function setRadialNormals(geo: THREE.BufferGeometry): void {
+  const pos = geo.attributes.position;
+  const out = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const len = Math.sqrt(x * x + z * z) || 1;
+    out[i * 3] = x / len;
+    out[i * 3 + 1] = 0;
+    out[i * 3 + 2] = z / len;
+  }
+  geo.setAttribute("normal", new THREE.BufferAttribute(out, 3));
+}
+
 /** Gaussian-blurred alpha, used as displacementMap for the tactile
  *  finish. Blurring the alpha channel in a temp canvas produces the
  *  ramped falloff at the edges that shows as a rounded bevel. See
@@ -669,7 +693,7 @@ export default function SupplementJarMesh({
       clearcoatRoughness: TACTILE_CLEARCOAT_ROUGHNESS,
       opacity: TACTILE_OPACITY,
       transparent: true,
-      alphaTest: 0.05,
+      alphaTest: 0.02,
       side: THREE.FrontSide,
       envMapIntensity: TACTILE_ENV_BASE,
       displacementScale: TACTILE_DISPLACE_SCALE,
@@ -1270,14 +1294,16 @@ export default function SupplementJarMesh({
   }, [labelScene]);
 
   // Tessellated clone of the label geometry, for the tactile puck's
-  // vertex displacement. The wrapped-cylinder label probably already
-  // has reasonable segment density, but TessellateModifier further
-  // splits any triangles that still have long edges — ensures the
-  // blurred-alpha displacement resolves cleanly at the rounded bevel.
+  // vertex displacement. TessellateModifier splits triangles so the
+  // blurred-alpha displacement resolves smoothly; setRadialNormals
+  // then forces every normal to point purely outward from the jar's
+  // axis so displacement can't shoot vertices up/down the cylinder.
   const labelTactileGeo = useMemo(() => {
     if (!labelGeo.attributes.position) return null;
     const modifier = new TessellateModifier(TACTILE_MAX_EDGE, 12);
-    return modifier.modify(labelGeo.clone());
+    const dense = modifier.modify(labelGeo.clone());
+    setRadialNormals(dense);
+    return dense;
   }, [labelGeo]);
 
   useEffect(
