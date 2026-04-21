@@ -79,6 +79,15 @@ export default function CalyxPreview() {
   const [layer3BackFile, setLayer3BackFile] = useState<File | null>(null);
   const [layer3BackFileName, setLayer3BackFileName] = useState<string | null>(null);
 
+  // Mosaic source image — a single square-ish image used by any layer whose
+  // finish is set to "Mosaic". Each layer crops a different random
+  // aspect-correct sub-rectangle so the same source yields distinct
+  // looks per panel. Starts null; the mesh falls back to the mylar variant
+  // until the user uploads a source.
+  const [mosaicSourceUrl, setMosaicSourceUrl] = useState<string | null>(null);
+  const [mosaicSourceFile, setMosaicSourceFile] = useState<File | null>(null);
+  const [mosaicSourceFileName, setMosaicSourceFileName] = useState<string | null>(null);
+
   // Active model — driven by BagViewer's Leva dropdown, surfaced here so the
   // upload buttons can re-label themselves (Bag Front/Back → Layer 2/3 Art).
   const [currentModel, setCurrentModel] = useState<"bag" | "jar">("bag");
@@ -216,6 +225,7 @@ export default function CalyxPreview() {
           backFileResult,
           l3FrontFileResult,
           l3BackFileResult,
+          mosaicSourceFileResult,
         ] = await Promise.all([
           fetchFile(set.label_image_url, set.title || "artwork.png"),
           set.material?.backImageUrl
@@ -226,6 +236,9 @@ export default function CalyxPreview() {
             : Promise.resolve(null),
           set.material?.layer3BackImageUrl
             ? fetchFile(set.material.layer3BackImageUrl, "layer3-back.png")
+            : Promise.resolve(null),
+          set.material?.mosaicSourceImageUrl
+            ? fetchFile(set.material.mosaicSourceImageUrl, "mosaic-source.png")
             : Promise.resolve(null),
         ]);
         if (cancelled) return;
@@ -245,6 +258,11 @@ export default function CalyxPreview() {
           setLayer3BackTextureUrl(set.material.layer3BackImageUrl);
           setLayer3BackFileName("layer3-back.png");
           if (l3BackFileResult) setLayer3BackFile(l3BackFileResult);
+        }
+        if (set.material?.mosaicSourceImageUrl) {
+          setMosaicSourceUrl(set.material.mosaicSourceImageUrl);
+          setMosaicSourceFileName("mosaic-source.png");
+          if (mosaicSourceFileResult) setMosaicSourceFile(mosaicSourceFileResult);
         }
 
         // Push resolved state into Leva defaults via BagViewer props, then
@@ -344,6 +362,25 @@ export default function CalyxPreview() {
       });
       setLayer3BackFile(file);
       setLayer3BackFileName(file.name);
+    },
+    []
+  );
+
+  // Mosaic source-image upload. Same WebP conversion path as the artwork
+  // uploads so Supabase only ever stores the smaller format, and the
+  // blob URL lives in state until the user saves (whereupon it's
+  // uploaded and the public URL is stashed on the material).
+  const handleMosaicSourceUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.files?.[0];
+      if (!raw) return;
+      const file = await convertImageToWebPLogged(raw, "mosaic");
+      setMosaicSourceUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+      setMosaicSourceFile(file);
+      setMosaicSourceFileName(file.name);
     },
     []
   );
@@ -526,6 +563,30 @@ export default function CalyxPreview() {
             </>
           )}
 
+          {/* Mosaic source image — shared by every layer set to the Mosaic
+              finish. A single upload slot since the same source image
+              cascades across Layer 1/2/3. Works in both bag and jar mode. */}
+          <label
+            className="cursor-pointer w-[160px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-full text-white text-[11px] font-semibold uppercase tracking-[0.08em] transition-all active:scale-95 select-none"
+            style={{ background: "#7c3aed" }}
+            onMouseEnter={e => (e.currentTarget.style.background = "#5b21b6")}
+            onMouseLeave={e => (e.currentTarget.style.background = "#7c3aed")}
+            title="Square-ish image the Mosaic finish samples random crops from"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1v6.5M3.5 3.5L6 1l2.5 2.5M1 8.5v1.5a1 1 0 001 1h8a1 1 0 001-1V8.5"
+                stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Mosaic Source
+            <input type="file" accept="image/*" className="hidden" onChange={handleMosaicSourceUpload} />
+          </label>
+
+          {mosaicSourceFileName && (
+            <p className="text-[9px] text-[#272724]/40 text-center px-2 leading-tight break-all select-none">
+              {mosaicSourceFileName.length > 22 ? mosaicSourceFileName.slice(0, 20) + "…" : mosaicSourceFileName}
+            </p>
+          )}
+
           <div className="w-[140px] h-px bg-[#e8ecf2]" />
 
           <p className="text-[9px] font-medium tracking-[0.14em] uppercase text-[#272724]/30 select-none">
@@ -586,6 +647,10 @@ export default function CalyxPreview() {
                 backFile,
                 layer3FrontFile,
                 layer3BackFile,
+                // Mosaic source image — uploaded alongside artwork so the
+                // Mosaic finish keeps its source on reopen. The save dialog
+                // uploads it and stashes the URL in `material.mosaicSourceImageUrl`.
+                mosaicSourceFile,
                 material: materialRef.current,
                 productType:
                   currentModel === "jar" ? "supplement-jar" : "mylar-bag",
@@ -703,6 +768,7 @@ export default function CalyxPreview() {
               backTextureUrl={backTextureUrl}
               layer3FrontTextureUrl={layer3FrontTextureUrl}
               layer3BackTextureUrl={layer3BackTextureUrl}
+              mosaicSourceUrl={mosaicSourceUrl}
               onScreenshot={setScreenshotUrl}
               captureRef={captureRef}
               onMaterialChange={handleMaterialChange}

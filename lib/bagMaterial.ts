@@ -22,6 +22,7 @@ export type BagFinish =
   | "foil"
   | "prismatic"
   | "multi-chrome"
+  | "mosaic"
   | "custom";
 
 export type BagLighting =
@@ -64,6 +65,11 @@ export const FINISH_PRESETS: Record<Exclude<BagFinish, "custom">, FinishPreset> 
     iridescenceIOR: 2.5,
     iridescenceThicknessRange: [0, 1200],
   },
+  // "Mosaic" — treat the uploaded source image as the base colour via a
+  // random aspect-correct crop. Default surface reads as a lightly glossed
+  // matte so the imagery itself carries the look; users can always pick
+  // Custom for full control.
+  mosaic:        { metalness: 0.1, roughness: 0.45 },
 };
 
 export interface BagMaterial {
@@ -128,6 +134,39 @@ export interface BagMaterial {
   backImageUrl?: string;
   layer3FrontImageUrl?: string;
   layer3BackImageUrl?: string;
+
+  /* Mosaic finish — shared source image plus per-layer crop seeds. When a
+   * layer's finish is set to "mosaic", the layer samples an aspect-correct
+   * random-offset crop of this source image. Offset pairs are stored as
+   * normalised 0-1 seeds that multiply into the remaining (1 - repeat)
+   * window at render time, so the same saved material restores the same
+   * crop on reload. mosaicZoom controls how much of the source the crop
+   * covers (1 = full source, > 1 tiles, < 1 zooms in). Per-layer flipX/
+   * flipY mirror the crop along either axis — aspect-preserving variety
+   * without the free-rotation distortion that plagued the first
+   * implementation on cylindrical jar labels. */
+  mosaicSourceImageUrl?: string;
+  mosaicZoom?: number;
+  /* Layer 1 (bag body / jar label base) mosaic crop seed + flips. */
+  mosaicOffsetU?: number;
+  mosaicOffsetV?: number;
+  mosaicFlipX?: boolean;
+  mosaicFlipY?: boolean;
+  /* Bag Layer 2 mosaic crop seed + flips. */
+  labelMosaicOffsetU?: number;
+  labelMosaicOffsetV?: number;
+  labelMosaicFlipX?: boolean;
+  labelMosaicFlipY?: boolean;
+  /* Jar Layer 2 mosaic crop seed + flips. */
+  layer2MosaicOffsetU?: number;
+  layer2MosaicOffsetV?: number;
+  layer2MosaicFlipX?: boolean;
+  layer2MosaicFlipY?: boolean;
+  /* Layer 3 mosaic crop seed + flips (shared bag / jar). */
+  layer3MosaicOffsetU?: number;
+  layer3MosaicOffsetV?: number;
+  layer3MosaicFlipX?: boolean;
+  layer3MosaicFlipY?: boolean;
 
   /* Scene + full lighting rig — saved per-slot so the look travels with
    * the configuration, not just the user's browser localStorage. Every

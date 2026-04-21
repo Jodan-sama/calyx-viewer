@@ -34,6 +34,10 @@ export type SaveSource =
       /** Bag Layer 3 back — ignored for jar saves. Resulting URL lands
        *  in `material.layer3BackImageUrl`. */
       layer3BackFile?: File | null;
+      /** Mosaic source image — shared across every layer using the
+       *  Mosaic finish. Uploaded alongside artwork; resulting URL lands
+       *  in `material.mosaicSourceImageUrl`. */
+      mosaicSourceFile?: File | null;
       material: BagMaterial;
       productType?: ProductSet["product_type"];
       environment?: SceneEnvironment;
@@ -228,6 +232,13 @@ export default function SaveToOutreachDialog({
               source.layer3BackFile,
               brand.slug,
               source.layer3BackFile.name
+            );
+          }
+          if (source.mosaicSourceFile) {
+            persistedMaterial.mosaicSourceImageUrl = await uploadLabel(
+              source.mosaicSourceFile,
+              brand.slug,
+              source.mosaicSourceFile.name
             );
           }
         }
