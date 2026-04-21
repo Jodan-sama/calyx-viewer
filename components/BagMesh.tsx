@@ -10,6 +10,7 @@ import { applyPrismaticShader } from "@/lib/foilShaders";
 import {
   applyMosaicCrop,
   buildArtworkAlphaMap,
+  buildMirroredSourceTexture,
   cloneMosaicTexture,
   loadMosaicTexture,
   resolveMosaicCrop,
@@ -88,6 +89,9 @@ interface BagMeshProps {
    *  finish === "mosaic". Null → mosaic layers skip rendering (fall
    *  through to a neutral placeholder material). */
   mosaicSourceUrl?: string | null;
+  /** Mirror the source along its vertical centre before any layer
+   *  samples from it — shared across every mosaic layer. */
+  mosaicMirror?: boolean;
   /** Crop zoom 0–1. 1 = full-fit aspect-correct crop of the source;
    *  smaller values zoom in and surface finer detail. Shared across
    *  layers so a single slider drives the whole design. */
@@ -423,6 +427,7 @@ export default function BagMesh({
   envIntensityScale = 1,
   floating = true,
   mosaicSourceUrl = null,
+  mosaicMirror = false,
   mosaicZoom = 1,
   mosaicOffsetU = 0,
   mosaicOffsetV = 0,
@@ -594,15 +599,36 @@ export default function BagMesh({
   // Shared by every layer whose finish is "mosaic". Each consuming material
   // gets its own Texture clone (see the masked set build) so offset/repeat
   // don't stomp each other across layers/panels.
-  const [mosaicSourceTex, setMosaicSourceTex] = useState<THREE.Texture | null>(null);
+  //
+  // `rawMosaicTex` is the user's uploaded image verbatim; `mosaicSourceTex`
+  // is what the layers actually sample from — either the raw texture or a
+  // centre-mirrored canvas derived from it (when the Mirror toggle is on).
+  // Splitting the two lets us toggle Mirror without re-fetching the
+  // upload: we keep the raw bytes and regenerate the mirrored canvas
+  // cheaply when the flag flips.
+  const [rawMosaicTex, setRawMosaicTex] = useState<THREE.Texture | null>(null);
   useEffect(() => {
-    if (!mosaicSourceUrl) { setMosaicSourceTex(null); return; }
+    if (!mosaicSourceUrl) { setRawMosaicTex(null); return; }
     const signal = { cancelled: false };
     loadMosaicTexture(mosaicSourceUrl, signal).then((tex) => {
-      if (!signal.cancelled && tex) setMosaicSourceTex(tex);
+      if (!signal.cancelled && tex) setRawMosaicTex(tex);
     });
     return () => { signal.cancelled = true; };
   }, [mosaicSourceUrl]);
+
+  const [mosaicSourceTex, setMosaicSourceTex] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    if (!rawMosaicTex) { setMosaicSourceTex(null); return; }
+    if (!mosaicMirror) { setMosaicSourceTex(rawMosaicTex); return; }
+    const mirrored = buildMirroredSourceTexture(rawMosaicTex);
+    if (mirrored) {
+      setMosaicSourceTex(mirrored);
+      return () => { mirrored.dispose(); };
+    }
+    // Mirror canvas failed (e.g. tainted image) — fall through to raw so
+    // the mosaic still renders rather than going blank.
+    setMosaicSourceTex(rawMosaicTex);
+  }, [rawMosaicTex, mosaicMirror]);
 
   // ── Bag scene + materials ──────────────────────────────────────────────────
   // The mylar-bag GLB ships with inconsistent vertex normals — front and

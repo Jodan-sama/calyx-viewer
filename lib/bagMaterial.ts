@@ -147,6 +147,24 @@ export interface BagMaterial {
    * implementation on cylindrical jar labels. */
   mosaicSourceImageUrl?: string;
   mosaicZoom?: number;
+  /* Mirror mode — when true, the mosaic source is swapped for a centre-
+   * symmetric version of itself (left half = source's left half; right
+   * half = that same left half flipped horizontally). Crops sampled
+   * from the mirrored source inherit the symmetry — useful on the jar
+   * (cylindrical wrap has no natural mirror axis) or to disable the
+   * bag's natural front/back mirror when the user wants continuous
+   * artwork across both sides. Shared across every mosaic layer. */
+  mosaicMirror?: boolean;
+  /* Per-layer rotation (radians) applied when mirror mode bakes the
+   * label-aspect canvas. Rotation happens BEFORE the crop is extracted,
+   * so the crop itself stays rectangular and the label's aspect is
+   * preserved — the net effect is the source viewed at an angle,
+   * HP-Hyper-Customisation style. Only meaningful on the jar (bag
+   * ignores these; its mirror path is aspect-agnostic). */
+  mosaicMirrorRotation?: number;
+  labelMosaicMirrorRotation?: number;
+  layer2MosaicMirrorRotation?: number;
+  layer3MosaicMirrorRotation?: number;
   /* Layer 1 (bag body / jar label base) mosaic crop seed + flips. */
   mosaicOffsetU?: number;
   mosaicOffsetV?: number;

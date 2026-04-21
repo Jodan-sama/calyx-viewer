@@ -246,6 +246,7 @@ export default function OutreachBagViewer({
       // Undefined fields fall through to the prop defaults (0 seed), which
       // still render a valid crop when mosaic isn't in use on that layer.
       mosaicSourceUrl={mat.mosaicSourceImageUrl ?? null}
+      mosaicMirror={mat.mosaicMirror}
       mosaicZoom={mat.mosaicZoom}
       mosaicOffsetU={mat.mosaicOffsetU}
       mosaicOffsetV={mat.mosaicOffsetV}
