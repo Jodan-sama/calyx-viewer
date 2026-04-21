@@ -41,21 +41,29 @@ const VARNISH_ROUGHNESS = 0.05;
 // Tactile tuning — matches BagMesh. The artwork itself stays flat
 // against the jar; the raised look comes from a stack of clear-varnish
 // shells rendered above it, masked by the artwork's alpha. On the jar
-// the shells "raise" via a small uniform scale bump (radial outward)
-// since the label wraps a cylinder and there is no single outward axis.
-const TACTILE_SHELL_COUNT = 6;
-/** Total outward scale of the topmost shell (1 = no raise). Keep this
- *  tight — the jar label is already close to the cap/lid geometry, and
- *  too much expansion pushes the varnish outside the jar silhouette.
- *  0.004 ≈ 0.4% expansion. */
-const TACTILE_SHELL_MAX_SCALE = 1.004;
-/** Layer 3's max scale — slightly more than Layer 2 so stacked-tactile
+// the shells "raise" via a radial-only scale bump (X and Z, keeping Y
+// as the axial axis), and the dome bevel is applied by shrinking Y on
+// the outer shells so the stack rounds off at the top.
+const TACTILE_SHELL_COUNT = 8;
+/** Max radial scale of the topmost shell. 1.01 = 1% outward. Raising
+ *  this past ~1.015 starts to push varnish beyond the jar's own
+ *  silhouette at the label's edges. */
+const TACTILE_SHELL_MAX_SCALE = 1.01;
+/** Layer 3's max scale — a touch more than Layer 2 so stacked-tactile
  *  layers still read in order. */
-const TACTILE_SHELL_MAX_SCALE_LAYER3 = 1.006;
-const TACTILE_SHELL_OPACITY = 0.18;
-const TACTILE_SHELL_ROUGHNESS = 0.1;
+const TACTILE_SHELL_MAX_SCALE_LAYER3 = 1.014;
+/** Y-axis shrink at the top of the dome (same quadratic curve as
+ *  BagMesh). Y is the jar's axial axis — shrinking Y on the outer
+ *  shells tapers the dome's top band inward, producing the rounded
+ *  side profile. */
+const TACTILE_DOME_MIN_SCALE = 0.88;
+const TACTILE_SHELL_OPACITY = 0.08;
+const TACTILE_SHELL_ROUGHNESS = 0.02;
 const TACTILE_SHELL_CLEARCOAT = 1.0;
-const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.05;
+const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.02;
+/** Higher than DECAL_ENV_BASE so the varnish reads as more reflective
+ *  than the matte print underneath. */
+const TACTILE_SHELL_ENV_BASE = 1.35;
 
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
@@ -631,7 +639,7 @@ export default function SupplementJarMesh({
       transparent: true,
       alphaTest: 0.02,
       side: THREE.FrontSide,
-      envMapIntensity: DECAL_ENV_BASE,
+      envMapIntensity: TACTILE_SHELL_ENV_BASE,
       polygonOffset: true,
       polygonOffsetFactor: offset,
       polygonOffsetUnits: offset,
@@ -826,8 +834,8 @@ export default function SupplementJarMesh({
   // Track scene dim / UV dampening on shell materials so they stay in
   // sync with the rest of the decal stack.
   useEffect(() => {
-    layer2TactileShellMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer3TactileShellMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer2TactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3TactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer2TactileShellMat.needsUpdate = true;
     layer3TactileShellMat.needsUpdate = true;
   }, [envIntensityScale, uvEnvMult, layer2TactileShellMat, layer3TactileShellMat]);
@@ -1268,22 +1276,23 @@ export default function SupplementJarMesh({
         />
       )}
 
-      {/* Layer 2 tactile shells — clear-varnish stack, radial raise. Each
-           shell is the same cylinder-wrapped label mesh scaled a hair
-           outward from the jar's origin, sharing one alphaMapped
-           clear-glass material. The stack reads as a solid raised
-           varnish puck over the artwork. */}
+      {/* Layer 2 tactile shells — clear-varnish stack over the label.
+           Each shell scales X and Z outward from the jar's origin
+           (radial raise) and shrinks Y toward the axial midline
+           (dome bevel), so the side profile of the stack rounds off
+           at the top rather than terminating in a flat ring. */}
       {layer2Tactile && layer2Tex && layer2BumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const s = 1 + (TACTILE_SHELL_MAX_SCALE - 1) * t;
+            const sRadial = 1 + (TACTILE_SHELL_MAX_SCALE - 1) * t;
+            const sY = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`jar-l2-tactile-${i}`}
                 geometry={labelGeo}
                 material={layer2TactileShellMat}
-                scale={[s, s, s]}
+                scale={[sRadial, sY, sRadial]}
                 renderOrder={10 + i}
               />
             );
@@ -1301,19 +1310,21 @@ export default function SupplementJarMesh({
         />
       )}
 
-      {/* Layer 3 tactile shells — scaled a touch more than Layer 2's
-           tactile so overlapping tactile layers still read in order. */}
+      {/* Layer 3 tactile shells — same construction as Layer 2's but
+           scaled a touch more radially so overlapping tactile layers
+           still read in order. */}
       {layer3Tactile && layer3Tex && layer3BumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const s = 1 + (TACTILE_SHELL_MAX_SCALE_LAYER3 - 1) * t;
+            const sRadial = 1 + (TACTILE_SHELL_MAX_SCALE_LAYER3 - 1) * t;
+            const sY = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`jar-l3-tactile-${i}`}
                 geometry={labelGeo}
                 material={layer3TactileShellMat}
-                scale={[s, s, s]}
+                scale={[sRadial, sY, sRadial]}
                 renderOrder={20 + i}
               />
             );

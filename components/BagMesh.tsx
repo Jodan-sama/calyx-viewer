@@ -118,23 +118,31 @@ const VARNISH_ROUGHNESS = 0.05;
 // a see-through gap behind the decal).
 /** Number of clear-varnish shells stacked per tactile layer per side.
  *  More shells → smoother "solid" silhouette at oblique angles but
- *  more draw calls. 6 is the sweet spot: side profile reads solid and
- *  the 4-mesh-per-layer cost is modest. */
-const TACTILE_SHELL_COUNT = 6;
+ *  more draw calls. 8 gives a convincing dome profile when combined
+ *  with the bevel scale below. */
+const TACTILE_SHELL_COUNT = 8;
 /** Total raise of the topmost shell above the panel, in group-local
- *  units (the group is scaled 5.5×). Intentionally subtle — enough to
- *  register as physical thickness under rotation but small enough that
- *  the varnish doesn't float off the bag. Front panels stack +Z, back
- *  panels −Z. */
-const TACTILE_TOTAL_RAISE = 0.0018;
-/** Per-shell clear-varnish material properties. Low opacity + full
- *  clearcoat + low roughness gives the "wet UV" look — you see the
- *  printed artwork clearly through the varnish, with a glossy top
- *  reflection. */
-const TACTILE_SHELL_OPACITY = 0.18;
-const TACTILE_SHELL_ROUGHNESS = 0.1;
+ *  units (the group is scaled 5.5×). Thickens the puck enough to read
+ *  clearly at grazing angles — front panels stack +Z, back panels −Z. */
+const TACTILE_TOTAL_RAISE = 0.003;
+/** Smallest X/Y silhouette scale at the top of the dome (shell N−1).
+ *  The base shell stays at ~1.0 and each shell above shrinks toward
+ *  this value on a quadratic curve — the overall side profile reads
+ *  as a rounded dome rather than a flat-top puck. 1.0 disables the
+ *  bevel entirely. */
+const TACTILE_DOME_MIN_SCALE = 0.88;
+/** Per-shell clear-varnish material properties. Very low opacity and
+ *  near-mirror clearcoat give the "wet UV" look — the printed
+ *  artwork shows through clearly while the puck still catches a
+ *  sharp gloss highlight. */
+const TACTILE_SHELL_OPACITY = 0.08;
+const TACTILE_SHELL_ROUGHNESS = 0.02;
 const TACTILE_SHELL_CLEARCOAT = 1.0;
-const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.05;
+const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.02;
+/** Shell envMap intensity base — pushed higher than the artwork's
+ *  (LABEL_ENV_BASE = 0.9) so the varnish reads as more reflective
+ *  than the matte printed artwork below. */
+const TACTILE_SHELL_ENV_BASE = 1.35;
 
 /** Builds a greyscale CanvasTexture whose pixel brightness equals the source
  *  texture's alpha channel, so it can be plugged straight into MeshPhysical
@@ -758,7 +766,7 @@ export default function BagMesh({
       transparent: true,
       alphaTest: 0.02,
       side: THREE.FrontSide,
-      envMapIntensity: LABEL_ENV_BASE,
+      envMapIntensity: TACTILE_SHELL_ENV_BASE,
       polygonOffset: true,
       // Higher polygon offset bias than the artwork (which is -4) so
       // shells always sort above the artwork decal regardless of the
@@ -810,8 +818,8 @@ export default function BagMesh({
   // tactile stays consistent when the user slides the HDRI down or
   // switches to UV mode (where we kill reflections almost entirely).
   useEffect(() => {
-    frontTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    backTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    frontTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
+    backTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
     frontTactileShellMat.needsUpdate = true;
     backTactileShellMat.needsUpdate = true;
   }, [envIntensityScale, uvEnvMult, frontTactileShellMat, backTactileShellMat]);
@@ -977,7 +985,7 @@ export default function BagMesh({
       transparent: true,
       alphaTest: 0.02,
       side: THREE.FrontSide,
-      envMapIntensity: LABEL_ENV_BASE,
+      envMapIntensity: TACTILE_SHELL_ENV_BASE,
       polygonOffset: true,
       polygonOffsetFactor: -16,
       polygonOffsetUnits: -16,
@@ -998,8 +1006,8 @@ export default function BagMesh({
   }, [layer3BackBumpTex, layer3BackTactileShellMat]);
 
   useEffect(() => {
-    layer3FrontTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer3BackTactileShellMat.envMapIntensity = LABEL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3FrontTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3BackTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
     layer3FrontTactileShellMat.needsUpdate = true;
     layer3BackTactileShellMat.needsUpdate = true;
   }, [envIntensityScale, uvEnvMult, layer3FrontTactileShellMat, layer3BackTactileShellMat]);
@@ -1429,13 +1437,22 @@ export default function BagMesh({
       {labelTactile && frontLabelGeo && frontLabelTex && frontBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const z = (TACTILE_TOTAL_RAISE * (i + 1)) / TACTILE_SHELL_COUNT;
+            // t ∈ (0, 1]: normalised height within the dome. The base
+            // shell (i=0) sits just above the artwork at near-full
+            // silhouette; the top shell (i=N-1) sits at TOTAL_RAISE
+            // with silhouette tapered to TACTILE_DOME_MIN_SCALE.
+            // Quadratic (t²) keeps the base broad and pulls the taper
+            // into the top third — a dome cross-section, not a cone.
+            const t = (i + 1) / TACTILE_SHELL_COUNT;
+            const z = TACTILE_TOTAL_RAISE * t;
+            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`l2f-tactile-${i}`}
                 geometry={frontLabelGeo}
                 material={frontTactileShellMat}
                 position={[0, 0, z]}
+                scale={[s, s, 1]}
                 renderOrder={10 + i}
               />
             );
@@ -1445,13 +1462,16 @@ export default function BagMesh({
       {labelTactile && backLabelGeo && backLabelTex && backBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const z = -(TACTILE_TOTAL_RAISE * (i + 1)) / TACTILE_SHELL_COUNT;
+            const t = (i + 1) / TACTILE_SHELL_COUNT;
+            const z = -TACTILE_TOTAL_RAISE * t;
+            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`l2b-tactile-${i}`}
                 geometry={backLabelGeo}
                 material={backTactileShellMat}
                 position={[0, 0, z]}
+                scale={[s, s, 1]}
                 renderOrder={10 + i}
               />
             );
@@ -1483,13 +1503,16 @@ export default function BagMesh({
       {layer3Tactile && frontLabelGeo && layer3FrontTex && layer3FrontBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const z = (TACTILE_TOTAL_RAISE * 1.3 * (i + 1)) / TACTILE_SHELL_COUNT;
+            const t = (i + 1) / TACTILE_SHELL_COUNT;
+            const z = TACTILE_TOTAL_RAISE * 1.3 * t;
+            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`l3f-tactile-${i}`}
                 geometry={frontLabelGeo}
                 material={layer3FrontTactileShellMat}
                 position={[0, 0, z]}
+                scale={[s, s, 1]}
                 renderOrder={20 + i}
               />
             );
@@ -1499,13 +1522,16 @@ export default function BagMesh({
       {layer3Tactile && backLabelGeo && layer3BackTex && layer3BackBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const z = -(TACTILE_TOTAL_RAISE * 1.3 * (i + 1)) / TACTILE_SHELL_COUNT;
+            const t = (i + 1) / TACTILE_SHELL_COUNT;
+            const z = -TACTILE_TOTAL_RAISE * 1.3 * t;
+            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`l3b-tactile-${i}`}
                 geometry={backLabelGeo}
                 material={layer3BackTactileShellMat}
                 position={[0, 0, z]}
+                scale={[s, s, 1]}
                 renderOrder={20 + i}
               />
             );
