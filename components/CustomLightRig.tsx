@@ -95,17 +95,7 @@ export function resolveWrapperBackground(
  * because the Outreach viewers conditionally render their own ambient
  * for non-rave scenes; we avoid stacking two ambients.
  */
-export function CustomLightRig({
-  mat,
-  shadowsEnabled = false,
-  shadowMapSize = 1024,
-  shadowRadius = 4,
-}: {
-  mat: BagMaterial;
-  shadowsEnabled?: boolean;
-  shadowMapSize?: number;
-  shadowRadius?: number;
-}) {
+export function CustomLightRig({ mat }: { mat: BagMaterial }) {
   // RectAreaLight needs a one-time uniforms-library init before GPU
   // use. Safe to call repeatedly; three.js guards internally.
   useEffect(() => {
@@ -126,14 +116,6 @@ export function CustomLightRig({
           position={[mat.dir1Pos.x, mat.dir1Pos.y, mat.dir1Pos.z]}
           intensity={mat.dir1Intensity ?? 2}
           color={mat.dir1Color ?? "#ffffff"}
-          castShadow={shadowsEnabled}
-          shadow-mapSize-width={shadowMapSize}
-          shadow-mapSize-height={shadowMapSize}
-          shadow-radius={shadowRadius}
-          shadow-camera-left={-6}
-          shadow-camera-right={6}
-          shadow-camera-top={6}
-          shadow-camera-bottom={-6}
         />
       )}
       {dirCount >= 2 && mat.dir2Pos && (
@@ -141,14 +123,6 @@ export function CustomLightRig({
           position={[mat.dir2Pos.x, mat.dir2Pos.y, mat.dir2Pos.z]}
           intensity={mat.dir2Intensity ?? 1}
           color={mat.dir2Color ?? "#e8d8ff"}
-          castShadow={shadowsEnabled}
-          shadow-mapSize-width={shadowMapSize}
-          shadow-mapSize-height={shadowMapSize}
-          shadow-radius={shadowRadius}
-          shadow-camera-left={-6}
-          shadow-camera-right={6}
-          shadow-camera-top={6}
-          shadow-camera-bottom={-6}
         />
       )}
 
@@ -162,10 +136,6 @@ export function CustomLightRig({
           penumbra={0.8}
           distance={14}
           decay={2}
-          castShadow={shadowsEnabled}
-          shadow-mapSize-width={shadowMapSize}
-          shadow-mapSize-height={shadowMapSize}
-          shadow-radius={shadowRadius}
         />
       )}
       {spotCount >= 2 && mat.spot2Pos && (
@@ -177,10 +147,6 @@ export function CustomLightRig({
           penumbra={0.8}
           distance={14}
           decay={2}
-          castShadow={shadowsEnabled}
-          shadow-mapSize-width={shadowMapSize}
-          shadow-mapSize-height={shadowMapSize}
-          shadow-radius={shadowRadius}
         />
       )}
       {spotCount >= 3 && mat.spot3Pos && (
@@ -192,10 +158,6 @@ export function CustomLightRig({
           penumbra={0.8}
           distance={14}
           decay={2}
-          castShadow={shadowsEnabled}
-          shadow-mapSize-width={shadowMapSize}
-          shadow-mapSize-height={shadowMapSize}
-          shadow-radius={shadowRadius}
         />
       )}
       {spotCount >= 4 && mat.spot4Pos && (
@@ -207,10 +169,6 @@ export function CustomLightRig({
           penumbra={0.8}
           distance={14}
           decay={2}
-          castShadow={shadowsEnabled}
-          shadow-mapSize-width={shadowMapSize}
-          shadow-mapSize-height={shadowMapSize}
-          shadow-radius={shadowRadius}
         />
       )}
 

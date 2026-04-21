@@ -139,12 +139,12 @@ export default function ClientSite({
             </p>
           ) : (
             <>
-              {/* Centered brand-logo slot. Always reserves vertical space so
-                  the layout is stable while a logo is being uploaded; renders
-                  a subtle dashed placeholder when no logo is set. The image
-                  uses object-contain + auto-width so the original aspect
-                  ratio is always preserved — never stretches to fill. */}
-              <div className="mb-12 flex items-center justify-center min-h-[120px]">
+              {/* Desktop: centred brand-logo header above the hero row,
+                  reserving 120px so the layout is stable during asset
+                  load. Hidden on mobile — the logo cell moves into the
+                  2×2 hero grid itself so there are four equal tiles on
+                  narrow screens. */}
+              <div className="mb-12 hidden md:flex items-center justify-center min-h-[120px]">
                 {brand?.logo_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -162,11 +162,34 @@ export default function ClientSite({
                 )}
               </div>
 
-              {/* 3D slots row — full-width on desktop, stacks to 2-up on
-                  tablets, 1-up on phones. Slot tiles intrinsically size to
-                  the available column, so they shrink with the screen. */}
+              {/* 3D slots row.
+                  Mobile (<md): 2×2 grid — brand logo in the top-left
+                    cell, three 3D product tiles filling the rest. Half
+                    the canvas area vs the old 1-up stack, so each slot
+                    renders into a much smaller framebuffer.
+                  Tablet (md): 2-up grid of 3 product tiles (logo lives
+                    above the row again).
+                  Desktop (lg+): 3-up row — unchanged. */}
               <section className="mb-16">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+                <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 lg:gap-8">
+                  {/* Logo cell — visible only on the mobile 2×2 grid.
+                       Square aspect matches the ProductSlot tiles next
+                       to it so the grid reads as four equal cards. */}
+                  <div className="md:hidden relative aspect-square rounded-[20px] overflow-hidden border border-[#272724]/10 bg-white/70 flex items-center justify-center p-6">
+                    {brand?.logo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={brand.logo_url}
+                        alt={brand.name}
+                        className="max-w-full max-h-full object-contain select-none"
+                        draggable={false}
+                      />
+                    ) : (
+                      <span className="text-[10px] tracking-[0.24em] uppercase text-[#272724]/30 select-none">
+                        Brand Logo
+                      </span>
+                    )}
+                  </div>
                   {[1, 2, 3].map((i) => (
                     <ProductSlot
                       key={i}
@@ -179,13 +202,15 @@ export default function ClientSite({
                 </div>
               </section>
 
-              {/* Digital Previews grid — fewer columns at each breakpoint so
-                  each square is bigger. Caps at 4 columns on widest screens. */}
+              {/* Digital Previews grid — 3 columns on mobile per the
+                  brief (was 1); scales up to 4 on desktop. Each tile is
+                  a flat image so no 3D cost per slot regardless of
+                  column count. */}
               <section className="pb-10">
                 <p className="text-[9px] font-medium tracking-[0.24em] uppercase text-[#272724]/35 mb-4">
                   Digital Previews
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <div className="grid grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6">
                   {Array.from({ length: 8 }, (_, i) => i + 1).map((i) => (
                     <GallerySlot
                       key={i}
