@@ -267,8 +267,19 @@ export default function OutreachBagViewer({
   const outerRef = useRef<HTMLDivElement>(null);
   const inViewport = useInViewport(outerRef);
 
-  const customRig = hasCustomRig(mat);
-  const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
+  // On mobile (non-UV) we strip the slot down to a common baseline so
+  // every tile renders the same cheap scene: transparent background,
+  // no saved custom-light rig, no Smoke / fog / gradient / flat colour
+  // fill, HDRI forced to drei's Warehouse preset. UV slots are exempt
+  // because the fluorescent-glow preview is their whole point.
+  const forceMobileBaseline = isMobile && !isUV;
+
+  const customRig = forceMobileBaseline ? false : hasCustomRig(mat);
+  const bgMode = forceMobileBaseline
+    ? "transparent"
+    : customRig
+      ? mat.backgroundMode ?? "flat"
+      : "flat";
   // UV Blacklight forces a near-black scene regardless of the slot's
   // saved background. A light backdrop washes out the fluorescent
   // glow, which is the only thing the UV preset is trying to sell.
@@ -303,7 +314,6 @@ export default function OutreachBagViewer({
             ? 1.1
             : 1.4,
       }}
-      shadows
       // Retina DPR = 2 yields a 4× pixel count vs DPR = 1. 1.5 is
       // the perceptual-equivalence point on phones (at 5-6" screens
       // you can't resolve the difference between 1.5 and 2), so
@@ -324,12 +334,6 @@ export default function OutreachBagViewer({
       }}
     >
       {canvasBg && <color attach="background" args={[canvasBg]} />}
-      {customRig && mat.fogEnabled && (
-        <fog
-          attach="fog"
-          args={[mat.fogColor ?? "#cccccc", mat.fogNear ?? 2, mat.fogFar ?? 10]}
-        />
-      )}
       {customRig ? (
         <ambientLight
           intensity={(mat.ambientIntensity ?? 0.45) * dimScale}
@@ -365,7 +369,14 @@ export default function OutreachBagViewer({
           null
         ) : (
           <Environment
-            preset={resolveEnvironmentPreset(mat.lighting)}
+            // On mobile (non-UV) every slot gets the same Warehouse
+            // HDR so the browser HTTP-cache delivers one file to all
+            // three contexts; desktop keeps the per-slot saved preset.
+            preset={
+              forceMobileBaseline
+                ? "warehouse"
+                : resolveEnvironmentPreset(mat.lighting)
+            }
             resolution={isMobile ? 128 : 256}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : dimScale
@@ -384,8 +395,11 @@ export default function OutreachBagViewer({
         {/* Smoke-environment scene elements — always render when the
             slot was saved with environment="smoke", independent of
             whether a custom rig exists. These (clouds + low-key lights)
-            are part of the env, not the material's lighting rig. */}
-        {isSmoke && (
+            are part of the env, not the material's lighting rig.
+            Skipped on the mobile baseline — Clouds' 200-particle
+            system and the SmokeLights rig are the single biggest
+            fillrate cost we can drop without changing the mesh. */}
+        {isSmoke && !forceMobileBaseline && (
           <>
             <SmokeLights />
             <SmokeBackground />
@@ -394,14 +408,7 @@ export default function OutreachBagViewer({
 
         {/* User's custom rig — stacks on top of preset + env lights so
             spotlights / directional / point / rect adds are additive. */}
-        {customRig && (
-          <CustomLightRig
-            mat={mat}
-            shadowsEnabled={mat.shadowsEnabled ?? false}
-            shadowMapSize={(mat.shadowMapSize ?? 1024) as number}
-            shadowRadius={(mat.shadowRadius ?? 4) as number}
-          />
-        )}
+        {customRig && <CustomLightRig mat={mat} />}
 
         {autoRotate && !interactive ? (
           <SpinningGroup speed={0.35}>{bag}</SpinningGroup>
@@ -409,7 +416,7 @@ export default function OutreachBagViewer({
           bag
         )}
 
-        {isSmoke ? (
+        {isSmoke && !forceMobileBaseline ? (
           <ReflectiveFloor mobile={isMobile} />
         ) : (
           <ContactShadows

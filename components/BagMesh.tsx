@@ -7,6 +7,7 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 interface BagMeshProps {
   // ── Base surface (mylar / foil / multi-chrome / custom) ─────────────────
@@ -414,6 +415,12 @@ export default function BagMesh({
   // ── Refs ───────────────────────────────────────────────────────────────────
   const groupRef = useRef<THREE.Group>(null);
   const decalDirty = useRef(true);
+
+  // On mobile we render only the base varnish mesh for a tactile
+  // layer — the three stacked extras the desktop path adds are a
+  // per-pixel-overdraw cost nobody can see on a 200-px tile, and they
+  // tripled fillrate per tactile decal. Desktop path unchanged.
+  const isMobile = useIsMobile();
 
   // ── Scene ──────────────────────────────────────────────────────────────────
   const { scene } = useGLTF("/mylar_bag.glb", true) as { scene: THREE.Group };
@@ -1368,7 +1375,7 @@ export default function BagMesh({
            copy (last offset) swaps to a transparent-white cap
            material so the varnish reads as a clear gloss layer over
            the printed artwork instead of re-painting the colours. */}
-      {labelTactile && frontLabelGeo && frontLabelTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+      {!isMobile && labelTactile && frontLabelGeo && frontLabelTex && TACTILE_STACK_OFFSETS.map((z, i) => {
         const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
         return (
           <mesh
@@ -1380,7 +1387,7 @@ export default function BagMesh({
           />
         );
       })}
-      {labelTactile && backLabelGeo && backLabelTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+      {!isMobile && labelTactile && backLabelGeo && backLabelTex && TACTILE_STACK_OFFSETS.map((z, i) => {
         const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
         return (
           <mesh
@@ -1415,7 +1422,7 @@ export default function BagMesh({
            varnish copies at tiny offsets, with the topmost using the
            transparent-cap material. Offsets are slightly larger here
            so Layer 3's stack sits above Layer 2's if both are on. */}
-      {layer3Tactile && frontLabelGeo && layer3FrontTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+      {!isMobile && layer3Tactile && frontLabelGeo && layer3FrontTex && TACTILE_STACK_OFFSETS.map((z, i) => {
         const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
         return (
           <mesh
@@ -1427,7 +1434,7 @@ export default function BagMesh({
           />
         );
       })}
-      {layer3Tactile && backLabelGeo && layer3BackTex && TACTILE_STACK_OFFSETS.map((z, i) => {
+      {!isMobile && layer3Tactile && backLabelGeo && layer3BackTex && TACTILE_STACK_OFFSETS.map((z, i) => {
         const isCap = i === TACTILE_STACK_OFFSETS.length - 1;
         return (
           <mesh

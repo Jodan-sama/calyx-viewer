@@ -10,6 +10,7 @@ import {
 } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 // ── Assets ───────────────────────────────────────────────────────────────────
 // The full jar comes from two glbs: one provides the body + lid (we reuse it
@@ -360,6 +361,10 @@ export default function SupplementJarMesh({
   // is active — same dampening as BagMesh. The violet rig is the only
   // light the user should see reflected off the jar.
   const uvEnvMult = lighting === "uv" ? 0.003 : 1;
+  // On mobile we skip the three tactile stack extras — see BagMesh
+  // for the full rationale.
+  const isMobile = useIsMobile();
+
   const { scene: bodyScene } = useGLTF(JAR_BODY_GLB, true) as { scene: THREE.Group };
   const { scene: labelScene } = useGLTF(JAR_LABEL_GLB, true) as { scene: THREE.Group };
 
@@ -1250,7 +1255,7 @@ export default function SupplementJarMesh({
            radial scale bumps. The topmost uses the transparent-cap
            material so the stack reads as clear varnish over the
            printed label rather than multiple painted copies. */}
-      {layer2Tactile && layer2Tex && TACTILE_STACK_SCALES.map((s, i) => {
+      {!isMobile && layer2Tactile && layer2Tex && TACTILE_STACK_SCALES.map((s, i) => {
         const isCap = i === TACTILE_STACK_SCALES.length - 1;
         return (
           <mesh
@@ -1276,7 +1281,7 @@ export default function SupplementJarMesh({
       {/* Layer 3 tactile — same as Layer 2, just slightly larger
            scale bumps so the Layer 3 stack sits above Layer 2 if
            both are on. Topmost again uses the transparent cap. */}
-      {layer3Tactile && layer3Tex && TACTILE_STACK_SCALES.map((s, i) => {
+      {!isMobile && layer3Tactile && layer3Tex && TACTILE_STACK_SCALES.map((s, i) => {
         const s3 = 1 + (s - 1) * 1.3;
         const isCap = i === TACTILE_STACK_SCALES.length - 1;
         return (

@@ -246,9 +246,16 @@ export default function OutreachJarViewer({
   const outerRef = useRef<HTMLDivElement>(null);
   const inViewport = useInViewport(outerRef);
 
-  // Play back the user's full rig when the slot was saved with one.
-  const customRig = hasCustomRig(mat);
-  const bgMode = customRig ? mat.backgroundMode ?? "flat" : "flat";
+  // Mobile baseline — see OutreachBagViewer for the full explanation.
+  // UV slots bypass this so their fluorescent-glow preview stays intact.
+  const forceMobileBaseline = isMobile && !isUV;
+
+  const customRig = forceMobileBaseline ? false : hasCustomRig(mat);
+  const bgMode = forceMobileBaseline
+    ? "transparent"
+    : customRig
+      ? mat.backgroundMode ?? "flat"
+      : "flat";
   const canvasBg = isUV
     ? "#07021a"
     : transparent || bgMode !== "flat"
@@ -275,7 +282,6 @@ export default function OutreachJarViewer({
           ? mat.toneMappingExposure ?? 1.4
           : 1.4,
       }}
-      shadows
       dpr={isMobile ? [1, 1.5] : [1, 2]}
       frameloop={inViewport ? "always" : "demand"}
       style={{
@@ -285,12 +291,6 @@ export default function OutreachJarViewer({
       }}
     >
       {canvasBg && <color attach="background" args={[canvasBg]} />}
-      {customRig && mat.fogEnabled && (
-        <fog
-          attach="fog"
-          args={[mat.fogColor ?? "#cccccc", mat.fogNear ?? 2, mat.fogFar ?? 10]}
-        />
-      )}
       {customRig ? (
         <ambientLight
           intensity={(mat.ambientIntensity ?? 0.45) * dimScale}
@@ -318,7 +318,7 @@ export default function OutreachJarViewer({
           null
         ) : (
           <Environment
-            preset={envPreset}
+            preset={forceMobileBaseline ? "warehouse" : envPreset}
             resolution={isMobile ? 128 : 256}
             environmentIntensity={
               customRig ? (mat.envIntensity ?? 1) * dimScale : dimScale
@@ -330,21 +330,14 @@ export default function OutreachJarViewer({
         {isUV && <UVLights />}
         {isDim && <RainbowLights />}
 
-        {isSmoke && (
+        {isSmoke && !forceMobileBaseline && (
           <>
             <SmokeLights />
             <SmokeBackground />
           </>
         )}
 
-        {customRig && (
-          <CustomLightRig
-            mat={mat}
-            shadowsEnabled={mat.shadowsEnabled ?? false}
-            shadowMapSize={(mat.shadowMapSize ?? 1024) as number}
-            shadowRadius={(mat.shadowRadius ?? 4) as number}
-          />
-        )}
+        {customRig && <CustomLightRig mat={mat} />}
 
         {autoRotate && !interactive ? (
           <SpinningGroup speed={0.35}>{jar}</SpinningGroup>
@@ -352,7 +345,7 @@ export default function OutreachJarViewer({
           jar
         )}
 
-        {isSmoke ? (
+        {isSmoke && !forceMobileBaseline ? (
           <ReflectiveFloor mobile={isMobile} />
         ) : (
           <ContactShadows
