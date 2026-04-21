@@ -109,14 +109,12 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
-// Tactile = three varnish layers stacked barely apart. The base
+// Tactile = four varnish layers stacked barely apart. The base
 // artwork mesh already renders with the varnish material (clearcoat +
-// alpha-bump) when tactile is on; the JSX below drops two additional
-// copies of the same mesh at tiny Z offsets along the panel normal.
-// Net effect is the varnish finish with a hint of thickness — nothing
-// dramatic, just enough for the layer to register as raised. Front
-// panels stack +Z, back panels stack −Z.
-const TACTILE_STACK_OFFSETS = [0.0004, 0.0008] as const;
+// alpha-bump) when tactile is on; the JSX below drops three more
+// copies of the same mesh at tiny equidistant Z offsets along the
+// panel normal. Front panels stack +Z, back panels stack −Z.
+const TACTILE_STACK_OFFSETS = [0.0004, 0.0008, 0.0012] as const;
 
 /** Builds a greyscale CanvasTexture whose pixel brightness equals the source
  *  texture's alpha channel, so it can be plugged straight into MeshPhysical

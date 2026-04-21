@@ -38,12 +38,14 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
-// Tactile = three varnish layers stacked barely apart. The base
-// artwork mesh renders with the varnish material; two extra copies
-// below at tiny radial scale bumps. Scales are tiny because the jar
-// group is scaled by targetScale (≈ 6–8), so small local expansion
-// reads much thicker on screen than on the 5.5× bag.
-const TACTILE_STACK_SCALES = [1.0003, 1.0006] as const;
+// Tactile = four varnish layers stacked barely apart. The base
+// artwork mesh renders with the varnish material; three extra
+// copies below at tiny radial scale bumps. The previous 1.0003 step
+// was invisible — for a label that lives at small local radius on
+// the cylinder, the scale has to be a touch bigger to read as the
+// same real-world offset the bag gets. 1.003 per step ≈ roughly
+// the bag's 0.0004 local-Z step after world-scale.
+const TACTILE_STACK_SCALES = [1.003, 1.006, 1.009] as const;
 
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
