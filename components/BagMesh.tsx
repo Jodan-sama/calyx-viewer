@@ -129,13 +129,12 @@ const VARNISH_ROUGHNESS = 0.05;
  *  the cost of more verts. 0.007 ≈ ~140 subdivs across a 1-unit
  *  panel — high enough to suppress the stair-stepping at the raised
  *  edges that shows up at 0.012. */
-const TACTILE_MAX_EDGE = 0.007;
+const TACTILE_MAX_EDGE = 0.004;
 /** Gaussian blur radius (source-image pixels) applied to the alpha
- *  before it becomes a displacementMap. Larger radius = softer ramp
- *  = more rounded bevel. 16px at a 1024-wide artwork ≈ 1.6% of panel
- *  width — enough for a visibly curved shoulder without eating into
- *  the artwork's footprint. */
-const TACTILE_DISPLACE_BLUR_PX = 16;
+ *  before it becomes a displacementMap. Trimmed from 16px — less
+ *  rounding at the shoulder, crisper definition for thin artwork
+ *  strokes. */
+const TACTILE_DISPLACE_BLUR_PX = 9;
 /** Peak raise above the panel, in group-local units (group is scaled
  *  5.5×). Displacement runs along the vertex normal, which points
  *  outward from the bag surface on both panels — no sign flip

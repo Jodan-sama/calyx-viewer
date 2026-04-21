@@ -45,8 +45,8 @@ const VARNISH_ROUGHNESS = 0.05;
 // the tessellated geometry — see `setRadialNormals` below). Blurred
 // alpha as the displacement source gives the puck a curved bevelled
 // edge. Density + blur mirror BagMesh so both products match.
-const TACTILE_MAX_EDGE = 0.008;
-const TACTILE_DISPLACE_BLUR_PX = 16;
+const TACTILE_MAX_EDGE = 0.005;
+const TACTILE_DISPLACE_BLUR_PX = 9;
 /** Peak raise along the vertex normal in jar-local units. Very small
  *  because the jar's group multiplies mesh units by `targetScale`
  *  (≈ 6–8), so the same local displacement reads much thicker on the
@@ -63,17 +63,29 @@ const TACTILE_ENV_BASE = 1.35;
  *  surface where the artwork is actually opaque. */
 /** Overwrite the normal attribute on a cylinder-wrapped geometry so
  *  every vertex's normal points purely radially outward from the
- *  cylinder's central Y-axis. Without this, `computeVertexNormals`
+ *  cylinder's central Y axis. Without this, `computeVertexNormals`
  *  (or interpolation after TessellateModifier) can leave some
  *  vertices with near-axial normals — which causes the displacement
  *  vector to shoot those vertices up/down the jar instead of out,
- *  producing the "streaks everywhere" artefact. */
+ *  producing the "streaks everywhere" artefact.
+ *
+ *  The jar GLB's label isn't always centred on (0, y, 0) — depending
+ *  on how it was authored, the cylinder axis can land at any (cx, y,
+ *  cz). Using the raw vertex XZ as the radial vector in that case
+ *  gives normals that skew toward world origin, re-creating the
+ *  streaking. Compute the axis from the geometry's XZ bbox centre so
+ *  the radial direction is always measured from the actual cylinder
+ *  axis, not the world origin. */
 function setRadialNormals(geo: THREE.BufferGeometry): void {
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const cx = bb ? (bb.max.x + bb.min.x) * 0.5 : 0;
+  const cz = bb ? (bb.max.z + bb.min.z) * 0.5 : 0;
   const pos = geo.attributes.position;
   const out = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
+    const x = pos.getX(i) - cx;
+    const z = pos.getZ(i) - cz;
     const len = Math.sqrt(x * x + z * z) || 1;
     out[i * 3] = x / len;
     out[i * 3 + 1] = 0;
