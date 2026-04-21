@@ -40,12 +40,12 @@ const VARNISH_ROUGHNESS = 0.05;
 
 // Tactile = four varnish layers stacked barely apart. The base
 // artwork mesh renders with the varnish material; three extra
-// copies below at tiny radial scale bumps. The previous 1.0003 step
-// was invisible — for a label that lives at small local radius on
-// the cylinder, the scale has to be a touch bigger to read as the
-// same real-world offset the bag gets. 1.003 per step ≈ roughly
-// the bag's 0.0004 local-Z step after world-scale.
+// copies at tiny radial scale bumps. The topmost copy uses a
+// transparent-white cap material (clearcoat + alpha silhouette but
+// no artwork colours), so the stack reads as clear varnish over
+// the printed label rather than multiple painted copies.
 const TACTILE_STACK_SCALES = [1.003, 1.006, 1.009] as const;
+const TACTILE_CAP_OPACITY = 0.25;
 
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
@@ -604,6 +604,31 @@ export default function SupplementJarMesh({
   const layer2Mat = useMemo(() => makeDecalMat(-4), []);
   const layer3Mat = useMemo(() => makeDecalMat(-8), []);
 
+  // Tactile top-cap materials — clear, glossy, alpha-clipped. Bind
+  // bumpMap + alphaMap from the layer's alpha-bump tex in a useEffect
+  // further down (same slot where the decal materials get theirs).
+  const makeTactileCapMat = (offset: number) =>
+    new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: VARNISH_ROUGHNESS,
+      clearcoat: VARNISH_CLEARCOAT,
+      clearcoatRoughness: VARNISH_CLEARCOAT_ROUGHNESS,
+      bumpScale: VARNISH_BUMP_SCALE,
+      opacity: TACTILE_CAP_OPACITY,
+      transparent: true,
+      alphaTest: 0.01,
+      side: THREE.FrontSide,
+      envMapIntensity: DECAL_ENV_BASE,
+      polygonOffset: true,
+      polygonOffsetFactor: offset,
+      polygonOffsetUnits: offset,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer2TactileCapMat = useMemo(() => makeTactileCapMat(-4), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const layer3TactileCapMat = useMemo(() => makeTactileCapMat(-8), []);
+
   // ── Material-mode masked variants (Layer 2 + Layer 3) ────────────────────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
   // cutout mask and the revealed pixels paint with the current Layer 1
@@ -773,6 +798,22 @@ export default function SupplementJarMesh({
     setLayer3BumpTex(tex);
     return () => { tex?.dispose(); };
   }, [layer3Tex]);
+
+  // Wire alphaMap (silhouette cutout) and bumpMap (surface texture)
+  // onto the tactile cap materials, tracking scene dim / UV state.
+  useEffect(() => {
+    layer2TactileCapMat.alphaMap = layer2BumpTex;
+    layer2TactileCapMat.bumpMap = layer2BumpTex;
+    layer2TactileCapMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer2TactileCapMat.needsUpdate = true;
+  }, [layer2BumpTex, envIntensityScale, uvEnvMult, layer2TactileCapMat]);
+
+  useEffect(() => {
+    layer3TactileCapMat.alphaMap = layer3BumpTex;
+    layer3TactileCapMat.bumpMap = layer3BumpTex;
+    layer3TactileCapMat.envMapIntensity = DECAL_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3TactileCapMat.needsUpdate = true;
+  }, [layer3BumpTex, envIntensityScale, uvEnvMult, layer3TactileCapMat]);
 
   // Layer 2 artwork material — always artwork mode. Varnish overrides to a
   // glossy clearcoat overprint with a subtle alpha-derived bump. This
@@ -1205,19 +1246,22 @@ export default function SupplementJarMesh({
         />
       )}
 
-      {/* Layer 2 tactile — two extra varnish-styled copies at tiny
-           radial scale bumps, stacked above the base label mesh.
-           Combined with the base, that's three nearly-coplanar
-           varnish layers — a subtle hint of thickness. */}
-      {layer2Tactile && layer2Tex && TACTILE_STACK_SCALES.map((s, i) => (
-        <mesh
-          key={`jar-l2-tactile-${i}`}
-          geometry={labelGeo}
-          material={layer2Mat}
-          scale={[s, s, s]}
-          renderOrder={2 + i}
-        />
-      ))}
+      {/* Layer 2 tactile — three extra varnish-styled copies at tiny
+           radial scale bumps. The topmost uses the transparent-cap
+           material so the stack reads as clear varnish over the
+           printed label rather than multiple painted copies. */}
+      {layer2Tactile && layer2Tex && TACTILE_STACK_SCALES.map((s, i) => {
+        const isCap = i === TACTILE_STACK_SCALES.length - 1;
+        return (
+          <mesh
+            key={`jar-l2-tactile-${i}`}
+            geometry={labelGeo}
+            material={isCap ? layer2TactileCapMat : layer2Mat}
+            scale={[s, s, s]}
+            renderOrder={2 + i}
+          />
+        );
+      })}
 
       {/* Layer 3 — same behavior as Layer 2, one render order higher so it
            always reads on top when overlapping. */}
@@ -1231,14 +1275,15 @@ export default function SupplementJarMesh({
 
       {/* Layer 3 tactile — same as Layer 2, just slightly larger
            scale bumps so the Layer 3 stack sits above Layer 2 if
-           both are on. */}
+           both are on. Topmost again uses the transparent cap. */}
       {layer3Tactile && layer3Tex && TACTILE_STACK_SCALES.map((s, i) => {
         const s3 = 1 + (s - 1) * 1.3;
+        const isCap = i === TACTILE_STACK_SCALES.length - 1;
         return (
           <mesh
             key={`jar-l3-tactile-${i}`}
             geometry={labelGeo}
-            material={layer3Mat}
+            material={isCap ? layer3TactileCapMat : layer3Mat}
             scale={[s3, s3, s3]}
             renderOrder={5 + i}
           />
