@@ -399,6 +399,9 @@ interface BagViewerProps {
   layer3FrontTextureUrl?: string | null;
   /** Optional Layer 3 back artwork (bag mode). Null → no Layer 3 back. */
   layer3BackTextureUrl?: string | null;
+  /** Source image for the Mosaic finish. Null → mosaic layers fall back
+   *  to the mylar variant until the user uploads a source. */
+  mosaicSourceUrl?: string | null;
   onScreenshot?: (url: string) => void;
   captureRef?: React.MutableRefObject<(() => string | null) | null>;
   onMaterialChange?: (material: BagMaterial) => void;
@@ -444,6 +447,7 @@ export default function BagViewer({
   backTextureUrl = null,
   layer3FrontTextureUrl = null,
   layer3BackTextureUrl = null,
+  mosaicSourceUrl = null,
   onScreenshot,
   captureRef,
   onMaterialChange,
@@ -469,6 +473,51 @@ export default function BagViewer({
   const iMat = initialMaterial;
   const iEnv = initialEnvironment ?? "default";
   const iModel = initialModel ?? "bag";
+
+  // Mosaic: the Leva "Re-randomize" button needs a stable callback
+  // identity (Leva captures `onClick` at schema-build time). We route
+  // through a ref that's refreshed every render so the button always
+  // calls into the latest setLeva reference. Mirrors the pattern used
+  // for Save/Reset Lighting.
+  const mosaicOpsRef = useRef<{ reroll: () => void }>({ reroll: () => {} });
+
+  // One-shot random seed for each per-layer crop. Consulted only when the
+  // saved material doesn't already carry an offset, so reopening an
+  // existing slot preserves the crop the user last saved. `Math.random()`
+  // is safe here because BagViewer is SSR-disabled (dynamic import).
+  const iMosaic = useMemo(() => {
+    // Each reroll flips a coin for flipX/flipY (aspect-preserving variety)
+    // and picks a random angle for mirror-mode rotation. Rotation only
+    // affects mirror mode on the jar — the baked label-aspect canvas is
+    // immune to aspect distortion, so rotation there is purely a crop-
+    // angle dial (HP Hyper-Customisation style).
+    const flip = () => Math.random() < 0.5;
+    const angle = () => Math.random() * Math.PI * 2;
+    return {
+      mosaicZoom: iMat?.mosaicZoom ?? 0.5,
+      mosaicMirror: iMat?.mosaicMirror ?? false,
+      mosaicOffsetU: iMat?.mosaicOffsetU ?? Math.random(),
+      mosaicOffsetV: iMat?.mosaicOffsetV ?? Math.random(),
+      mosaicFlipX: iMat?.mosaicFlipX ?? flip(),
+      mosaicFlipY: iMat?.mosaicFlipY ?? flip(),
+      mosaicMirrorRotation: iMat?.mosaicMirrorRotation ?? angle(),
+      labelMosaicOffsetU: iMat?.labelMosaicOffsetU ?? Math.random(),
+      labelMosaicOffsetV: iMat?.labelMosaicOffsetV ?? Math.random(),
+      labelMosaicFlipX: iMat?.labelMosaicFlipX ?? flip(),
+      labelMosaicFlipY: iMat?.labelMosaicFlipY ?? flip(),
+      labelMosaicMirrorRotation: iMat?.labelMosaicMirrorRotation ?? angle(),
+      layer2MosaicOffsetU: iMat?.layer2MosaicOffsetU ?? Math.random(),
+      layer2MosaicOffsetV: iMat?.layer2MosaicOffsetV ?? Math.random(),
+      layer2MosaicFlipX: iMat?.layer2MosaicFlipX ?? flip(),
+      layer2MosaicFlipY: iMat?.layer2MosaicFlipY ?? flip(),
+      layer2MosaicMirrorRotation: iMat?.layer2MosaicMirrorRotation ?? angle(),
+      layer3MosaicOffsetU: iMat?.layer3MosaicOffsetU ?? Math.random(),
+      layer3MosaicOffsetV: iMat?.layer3MosaicOffsetV ?? Math.random(),
+      layer3MosaicFlipX: iMat?.layer3MosaicFlipX ?? flip(),
+      layer3MosaicFlipY: iMat?.layer3MosaicFlipY ?? flip(),
+      layer3MosaicMirrorRotation: iMat?.layer3MosaicMirrorRotation ?? angle(),
+    };
+  }, [iMat]);
 
   // Seed the Lighting folder from whatever rig is stored for the
   // initial environment — each env (default/smoke/dim) can carry its
@@ -622,6 +671,7 @@ export default function BagViewer({
           "Holographic Foil": "foil",
           "Prismatic Foil": "prismatic",
           "Multi-Chrome": "multi-chrome",
+          Mosaic: "mosaic",
           Custom: "custom",
           // Diagnostic mode — renders every bag fragment coloured by
           // its world-space normal vector so you can tell by eye
@@ -632,16 +682,23 @@ export default function BagViewer({
           "Debug Normals": "debug-normals",
         },
       },
+      bagColor: {
+        label: "Bag Color", value: iMat?.bagColor ?? "#c4cdd8",
+      },
+      // Metalness/Roughness stay visible for every finish. Only Custom
+      // and Mosaic actually consume these values (bagProps below routes
+      // the preset's locked numbers in for every other finish), but
+      // keeping them rendered unconditionally dodges a Leva folder-height
+      // cache bug: conditionally mounting rows mid-session leaves the
+      // folder's container frozen at its first-mount height, which made
+      // Surface's content overlap Layer 2's header when Mosaic was
+      // picked. A tiny UX cost (sliders that do nothing on presets) for
+      // a clean layout in every finish mode.
       metalness: {
         label: "Metalness", value: iMat?.metalness ?? 0.92, min: 0, max: 1, step: 0.01,
-        render: (get) => get("Surface.finish") === "custom",
       },
       roughness: {
         label: "Roughness", value: iMat?.roughness ?? 0.08, min: 0, max: 1, step: 0.01,
-        render: (get) => get("Surface.finish") === "custom",
-      },
-      bagColor: {
-        label: "Bag Color", value: iMat?.bagColor ?? "#c4cdd8",
       },
     }, { collapsed: false }),
 
@@ -705,6 +762,7 @@ export default function BagViewer({
           "Holographic Foil": "foil",
           "Prismatic Foil": "prismatic",
           "Multi-Chrome": "multi-chrome",
+          Mosaic: "mosaic",
           Custom: "custom",
         },
         render: (get) =>
@@ -713,17 +771,21 @@ export default function BagViewer({
       },
       labelMatMetalness: {
         label: "Layer Metalness", value: iMat?.labelMatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.model") === "bag" &&
-          get("Layer 2.labelMaterial") &&
-          get("Layer 2.labelMatFinish") === "custom",
+        render: (get) => {
+          const f = get("Layer 2.labelMatFinish");
+          return get("Model.model") === "bag" &&
+            get("Layer 2.labelMaterial") &&
+            (f === "custom" || f === "mosaic");
+        },
       },
       labelMatRoughness: {
         label: "Layer Roughness", value: iMat?.labelMatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.model") === "bag" &&
-          get("Layer 2.labelMaterial") &&
-          get("Layer 2.labelMatFinish") === "custom",
+        render: (get) => {
+          const f = get("Layer 2.labelMatFinish");
+          return get("Model.model") === "bag" &&
+            get("Layer 2.labelMaterial") &&
+            (f === "custom" || f === "mosaic");
+        },
       },
       // Jar Layer 2 — artwork-mode metalness / roughness / varnish.
       layer2Metalness: {
@@ -777,6 +839,7 @@ export default function BagViewer({
           "Holographic Foil": "foil",
           "Prismatic Foil": "prismatic",
           "Multi-Chrome": "multi-chrome",
+          Mosaic: "mosaic",
           Custom: "custom",
         },
         render: (get) =>
@@ -785,17 +848,21 @@ export default function BagViewer({
       },
       layer2MatMetalness: {
         label: "Layer Metalness", value: iMat?.layer2MatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.model") === "jar" &&
-          get("Layer 2.layer2Material") &&
-          get("Layer 2.layer2MatFinish") === "custom",
+        render: (get) => {
+          const f = get("Layer 2.layer2MatFinish");
+          return get("Model.model") === "jar" &&
+            get("Layer 2.layer2Material") &&
+            (f === "custom" || f === "mosaic");
+        },
       },
       layer2MatRoughness: {
         label: "Layer Roughness", value: iMat?.layer2MatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Model.model") === "jar" &&
-          get("Layer 2.layer2Material") &&
-          get("Layer 2.layer2MatFinish") === "custom",
+        render: (get) => {
+          const f = get("Layer 2.layer2MatFinish");
+          return get("Model.model") === "jar" &&
+            get("Layer 2.layer2Material") &&
+            (f === "custom" || f === "mosaic");
+        },
       },
     }, { collapsed: false }),
 
@@ -850,23 +917,80 @@ export default function BagViewer({
           "Holographic Foil": "foil",
           "Prismatic Foil": "prismatic",
           "Multi-Chrome": "multi-chrome",
+          Mosaic: "mosaic",
           Custom: "custom",
         },
         render: (get) => get("Layer 3.layer3Material"),
       },
       layer3MatMetalness: {
         label: "Layer Metalness", value: iMat?.layer3MatMetalness ?? 0.92, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Layer 3.layer3Material") &&
-          get("Layer 3.layer3MatFinish") === "custom",
+        render: (get) => {
+          const f = get("Layer 3.layer3MatFinish");
+          return get("Layer 3.layer3Material") &&
+            (f === "custom" || f === "mosaic");
+        },
       },
       layer3MatRoughness: {
         label: "Layer Roughness", value: iMat?.layer3MatRoughness ?? 0.08, min: 0, max: 1, step: 0.01,
-        render: (get) =>
-          get("Layer 3.layer3Material") &&
-          get("Layer 3.layer3MatFinish") === "custom",
+        render: (get) => {
+          const f = get("Layer 3.layer3MatFinish");
+          return get("Layer 3.layer3Material") &&
+            (f === "custom" || f === "mosaic");
+        },
       },
     }, { collapsed: false }),
+
+    Mosaic: folder({
+      // Shared crop zoom: 1 = full-fit aspect-correct crop of the source,
+      // values > 1 tile the source across the surface for a zoomed-out
+      // look (the only way past full-fit on a bounded 1×1 source), values
+      // < 1 zoom in to finer detail so the random offsets actually
+      // surface different content per layer.
+      mosaicZoom: {
+        label: "Zoom", value: iMosaic.mosaicZoom, min: 0.05, max: 3, step: 0.01,
+      },
+      // "Mirror" swaps the mosaic source for a centre-symmetric version
+      // of itself before any layer crops it. Off → source is used raw.
+      // On → left half stays; right half is replaced with the left half
+      // flipped horizontally. Useful on the jar (cylindrical wrap has
+      // no natural mirror seam) and as a way to disable the bag's
+      // natural front/back mirror when the user wants continuous art.
+      mosaicMirror: {
+        label: "Mirror", value: iMosaic.mosaicMirror,
+      },
+      // "Re-randomize" picks new 0–1 offset seeds and coin-flips the
+      // per-layer mirror toggles (flipX/flipY) for every layer. Mirrors
+      // preserve aspect — unlike a free rotation which axis-swaps and
+      // distorts non-square targets like cylindrical jar labels.
+      // Leva renders the Mosaic folder's button with its field key as the
+      // label ("mosaicReroll"). Rename the key itself so the user-facing
+      // text reads naturally — Leva's ButtonSettings has no `label` prop.
+      "Re-randomize crops": button(() => mosaicOpsRef.current.reroll()),
+      // Hidden offset + flip fields — persisted on the material but
+      // never rendered as sliders. `render: () => false` keeps them out of
+      // the sidebar while still letting `setLeva` read/write through the
+      // same store.
+      mosaicOffsetU: { value: iMosaic.mosaicOffsetU, render: () => false },
+      mosaicOffsetV: { value: iMosaic.mosaicOffsetV, render: () => false },
+      mosaicFlipX: { value: iMosaic.mosaicFlipX, render: () => false },
+      mosaicFlipY: { value: iMosaic.mosaicFlipY, render: () => false },
+      mosaicMirrorRotation: { value: iMosaic.mosaicMirrorRotation, render: () => false },
+      labelMosaicOffsetU: { value: iMosaic.labelMosaicOffsetU, render: () => false },
+      labelMosaicOffsetV: { value: iMosaic.labelMosaicOffsetV, render: () => false },
+      labelMosaicFlipX: { value: iMosaic.labelMosaicFlipX, render: () => false },
+      labelMosaicFlipY: { value: iMosaic.labelMosaicFlipY, render: () => false },
+      labelMosaicMirrorRotation: { value: iMosaic.labelMosaicMirrorRotation, render: () => false },
+      layer2MosaicOffsetU: { value: iMosaic.layer2MosaicOffsetU, render: () => false },
+      layer2MosaicOffsetV: { value: iMosaic.layer2MosaicOffsetV, render: () => false },
+      layer2MosaicFlipX: { value: iMosaic.layer2MosaicFlipX, render: () => false },
+      layer2MosaicFlipY: { value: iMosaic.layer2MosaicFlipY, render: () => false },
+      layer2MosaicMirrorRotation: { value: iMosaic.layer2MosaicMirrorRotation, render: () => false },
+      layer3MosaicOffsetU: { value: iMosaic.layer3MosaicOffsetU, render: () => false },
+      layer3MosaicOffsetV: { value: iMosaic.layer3MosaicOffsetV, render: () => false },
+      layer3MosaicFlipX: { value: iMosaic.layer3MosaicFlipX, render: () => false },
+      layer3MosaicFlipY: { value: iMosaic.layer3MosaicFlipY, render: () => false },
+      layer3MosaicMirrorRotation: { value: iMosaic.layer3MosaicMirrorRotation, render: () => false },
+    }, { collapsed: true }),
 
     Scene: folder({
       // Auto Rotate stays in the Materials sidebar since it's a
@@ -1277,7 +1401,46 @@ export default function BagViewer({
     layer2MatFinish, layer2MatMetalness, layer2MatRoughness,
     layer3Metalness, layer3Roughness, layer3Varnish, layer3Tactile, layer3Material, layer3UV,
     layer3MatFinish, layer3MatMetalness, layer3MatRoughness,
+    mosaicZoom, mosaicMirror,
+    mosaicOffsetU, mosaicOffsetV, mosaicFlipX, mosaicFlipY, mosaicMirrorRotation,
+    labelMosaicOffsetU, labelMosaicOffsetV, labelMosaicFlipX, labelMosaicFlipY, labelMosaicMirrorRotation,
+    layer2MosaicOffsetU, layer2MosaicOffsetV, layer2MosaicFlipX, layer2MosaicFlipY, layer2MosaicMirrorRotation,
+    layer3MosaicOffsetU, layer3MosaicOffsetV, layer3MosaicFlipX, layer3MosaicFlipY, layer3MosaicMirrorRotation,
   } = values;
+
+  // Re-roll every per-layer crop seed + coin-flip the mirror toggles.
+  // Invoked by the Mosaic folder's Re-randomize button via `mosaicOpsRef`.
+  // Using `setLeva` routes the new values through the same store the
+  // sync effects read, so the 3D view updates on the next render.
+  // Flips preserve aspect (no axis-swap), so unlike a free rotation they
+  // never distort when the target isn't 1:1 (cylindrical jar labels,
+  // rectangular bag panels).
+  mosaicOpsRef.current.reroll = () => {
+    const flip = () => Math.random() < 0.5;
+    const angle = () => Math.random() * Math.PI * 2;
+    setLeva({
+      mosaicOffsetU: Math.random(),
+      mosaicOffsetV: Math.random(),
+      mosaicFlipX: flip(),
+      mosaicFlipY: flip(),
+      mosaicMirrorRotation: angle(),
+      labelMosaicOffsetU: Math.random(),
+      labelMosaicOffsetV: Math.random(),
+      labelMosaicFlipX: flip(),
+      labelMosaicFlipY: flip(),
+      labelMosaicMirrorRotation: angle(),
+      layer2MosaicOffsetU: Math.random(),
+      layer2MosaicOffsetV: Math.random(),
+      layer2MosaicFlipX: flip(),
+      layer2MosaicFlipY: flip(),
+      layer2MosaicMirrorRotation: angle(),
+      layer3MosaicOffsetU: Math.random(),
+      layer3MosaicOffsetV: Math.random(),
+      layer3MosaicFlipX: flip(),
+      layer3MosaicFlipY: flip(),
+      layer3MosaicMirrorRotation: angle(),
+    });
+  };
 
   const {
     lighting,
@@ -1439,8 +1602,11 @@ export default function BagViewer({
     onEnvironmentChange?.(environment as "default" | "smoke" | "dim");
   }, [environment, onEnvironmentChange]);
 
+  // Custom and Mosaic both drop to the live metalness/roughness sliders
+  // so the user can tune gloss while staying in the finish. Other presets
+  // lock to FINISH_PRESETS for predictable rendering.
   const preset =
-    finish === "custom"
+    finish === "custom" || finish === "mosaic"
       ? null
       : FINISH_PRESETS[finish as Exclude<BagFinish, "custom">] ?? FINISH_PRESETS.metallic;
   const bagProps = preset
@@ -1541,6 +1707,15 @@ export default function BagViewer({
       rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
       rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
       rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
+      // Mosaic — shared zoom + per-layer crop seeds. The source-image URL
+      // lives on the page (page-owned upload state) and gets merged into
+      // the material at save time, so we persist seeds here without
+      // overwriting `mosaicSourceImageUrl` on every emit.
+      mosaicZoom, mosaicMirror,
+      mosaicOffsetU, mosaicOffsetV, mosaicFlipX, mosaicFlipY, mosaicMirrorRotation,
+      labelMosaicOffsetU, labelMosaicOffsetV, labelMosaicFlipX, labelMosaicFlipY, labelMosaicMirrorRotation,
+      layer2MosaicOffsetU, layer2MosaicOffsetV, layer2MosaicFlipX, layer2MosaicFlipY, layer2MosaicMirrorRotation,
+      layer3MosaicOffsetU, layer3MosaicOffsetV, layer3MosaicFlipX, layer3MosaicFlipY, layer3MosaicMirrorRotation,
     });
   }, [
     finish,
@@ -1612,6 +1787,11 @@ export default function BagViewer({
     rect2Color, rect2Intensity, rect2Width, rect2Height, rect2X, rect2Y, rect2Z,
     rect3Color, rect3Intensity, rect3Width, rect3Height, rect3X, rect3Y, rect3Z,
     rect4Color, rect4Intensity, rect4Width, rect4Height, rect4X, rect4Y, rect4Z,
+    mosaicZoom, mosaicMirror,
+    mosaicOffsetU, mosaicOffsetV, mosaicFlipX, mosaicFlipY, mosaicMirrorRotation,
+    labelMosaicOffsetU, labelMosaicOffsetV, labelMosaicFlipX, labelMosaicFlipY, labelMosaicMirrorRotation,
+    layer2MosaicOffsetU, layer2MosaicOffsetV, layer2MosaicFlipX, layer2MosaicFlipY, layer2MosaicMirrorRotation,
+    layer3MosaicOffsetU, layer3MosaicOffsetV, layer3MosaicFlipX, layer3MosaicFlipY, layer3MosaicMirrorRotation,
     onMaterialChange,
   ]);
 
@@ -2007,6 +2187,21 @@ export default function BagViewer({
             layer3UV={layer3UV}
             envIntensityScale={dimScale * envIntensity}
             floating={environment !== "smoke"}
+            mosaicSourceUrl={mosaicSourceUrl}
+            mosaicMirror={mosaicMirror as boolean}
+            mosaicZoom={mosaicZoom as number}
+            mosaicOffsetU={mosaicOffsetU as number}
+            mosaicOffsetV={mosaicOffsetV as number}
+            mosaicFlipX={mosaicFlipX as boolean}
+            mosaicFlipY={mosaicFlipY as boolean}
+            labelMosaicOffsetU={labelMosaicOffsetU as number}
+            labelMosaicOffsetV={labelMosaicOffsetV as number}
+            labelMosaicFlipX={labelMosaicFlipX as boolean}
+            labelMosaicFlipY={labelMosaicFlipY as boolean}
+            layer3MosaicOffsetU={layer3MosaicOffsetU as number}
+            layer3MosaicOffsetV={layer3MosaicOffsetV as number}
+            layer3MosaicFlipX={layer3MosaicFlipX as boolean}
+            layer3MosaicFlipY={layer3MosaicFlipY as boolean}
           />
         ) : (
           <SupplementJarMesh
@@ -2053,6 +2248,24 @@ export default function BagViewer({
             layer3UV={layer3UV}
             envIntensityScale={dimScale * envIntensity}
             floating={environment !== "smoke"}
+            mosaicSourceUrl={mosaicSourceUrl}
+            mosaicMirror={mosaicMirror as boolean}
+            mosaicZoom={mosaicZoom as number}
+            mosaicOffsetU={mosaicOffsetU as number}
+            mosaicOffsetV={mosaicOffsetV as number}
+            mosaicFlipX={mosaicFlipX as boolean}
+            mosaicFlipY={mosaicFlipY as boolean}
+            mosaicMirrorRotation={mosaicMirrorRotation as number}
+            layer2MosaicOffsetU={layer2MosaicOffsetU as number}
+            layer2MosaicOffsetV={layer2MosaicOffsetV as number}
+            layer2MosaicFlipX={layer2MosaicFlipX as boolean}
+            layer2MosaicFlipY={layer2MosaicFlipY as boolean}
+            layer2MosaicMirrorRotation={layer2MosaicMirrorRotation as number}
+            layer3MosaicOffsetU={layer3MosaicOffsetU as number}
+            layer3MosaicOffsetV={layer3MosaicOffsetV as number}
+            layer3MosaicFlipX={layer3MosaicFlipX as boolean}
+            layer3MosaicFlipY={layer3MosaicFlipY as boolean}
+            layer3MosaicMirrorRotation={layer3MosaicMirrorRotation as number}
           />
         )}
 

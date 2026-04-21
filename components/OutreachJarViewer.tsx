@@ -238,6 +238,27 @@ export default function OutreachJarViewer({
       layer3MatRoughness={mat.layer3MatRoughness}
       envIntensityScale={dimScale}
       floating={env !== "smoke"}
+      // Mosaic — shared source URL + per-layer crop seeds. Undefined
+      // fields fall through to the mesh prop defaults (0) which still
+      // produce a valid crop when mosaic isn't in use on that layer.
+      mosaicSourceUrl={mat.mosaicSourceImageUrl ?? null}
+      mosaicMirror={mat.mosaicMirror}
+      mosaicZoom={mat.mosaicZoom}
+      mosaicOffsetU={mat.mosaicOffsetU}
+      mosaicOffsetV={mat.mosaicOffsetV}
+      mosaicFlipX={mat.mosaicFlipX}
+      mosaicFlipY={mat.mosaicFlipY}
+      mosaicMirrorRotation={mat.mosaicMirrorRotation}
+      layer2MosaicOffsetU={mat.layer2MosaicOffsetU}
+      layer2MosaicOffsetV={mat.layer2MosaicOffsetV}
+      layer2MosaicFlipX={mat.layer2MosaicFlipX}
+      layer2MosaicFlipY={mat.layer2MosaicFlipY}
+      layer2MosaicMirrorRotation={mat.layer2MosaicMirrorRotation}
+      layer3MosaicOffsetU={mat.layer3MosaicOffsetU}
+      layer3MosaicOffsetV={mat.layer3MosaicOffsetV}
+      layer3MosaicFlipX={mat.layer3MosaicFlipX}
+      layer3MosaicFlipY={mat.layer3MosaicFlipY}
+      layer3MosaicMirrorRotation={mat.layer3MosaicMirrorRotation}
     />
   );
 
