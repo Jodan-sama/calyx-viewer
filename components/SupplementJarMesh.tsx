@@ -1109,6 +1109,15 @@ export default function SupplementJarMesh({
   // which read as dark vertical stripes under reflective materials), then
   // reproject UVs onto a cylinder. The final geometry is shared by Layer 1
   // (base material), Layer 2 (artwork/foil), and Layer 3 (artwork/foil).
+  // Centred clone of the label geometry + original centroid. The shell
+  // stack scales about mesh-local origin, and the jar's label wraps a
+  // cylinder whose origin sits on the jar's central axis — NOT the
+  // label's centroid. Scaling Y about that origin drifts the stack
+  // vertically; recentring the geometry and repositioning the shell at
+  // the original centroid fixes the pivot.
+  //
+  // Declared alongside `labelGeo` so the two useMemos share the same
+  // dependency surface and stay in lockstep on model swaps.
   const labelGeo = useMemo(() => {
     const clone = labelScene.clone(true);
     clone.updateMatrixWorld(true);
@@ -1207,6 +1216,26 @@ export default function SupplementJarMesh({
     return cylindricalUVs(welded, yMin, yMax, seamAngle);
   }, [labelScene]);
 
+  // Centred clone + centroid for the tactile shell stack. See comment
+  // above labelGeo for why the pivot needs to move off the jar's axis.
+  const { labelGeoCentered, labelCentroid } = useMemo(() => {
+    if (!labelGeo.attributes.position) {
+      return { labelGeoCentered: null, labelCentroid: null };
+    }
+    const cloned = labelGeo.clone();
+    cloned.computeBoundingBox();
+    const c = new THREE.Vector3();
+    cloned.boundingBox!.getCenter(c);
+    cloned.translate(-c.x, -c.y, -c.z);
+    return { labelGeoCentered: cloned, labelCentroid: c };
+  }, [labelGeo]);
+
+  // Dispose the centred clone when it changes / unmounts.
+  useEffect(
+    () => () => { labelGeoCentered?.dispose(); },
+    [labelGeoCentered]
+  );
+
   // ── Autofit ───────────────────────────────────────────────────────────────
   // Target height 1.0 units — the jar is wider than it is tall, so even with
   // a modest height it still takes up a lot of horizontal viewport.
@@ -1277,11 +1306,11 @@ export default function SupplementJarMesh({
       )}
 
       {/* Layer 2 tactile shells — clear-varnish stack over the label.
-           Each shell scales X and Z outward from the jar's origin
-           (radial raise) and shrinks Y toward the axial midline
+           Each shell scales X and Z outward from the label's centroid
+           (radial raise) and shrinks Y toward the same centroid
            (dome bevel), so the side profile of the stack rounds off
-           at the top rather than terminating in a flat ring. */}
-      {layer2Tactile && layer2Tex && layer2BumpTex && (
+           at the top rather than drifting up/down the jar's axis. */}
+      {layer2Tactile && layer2Tex && layer2BumpTex && labelGeoCentered && labelCentroid && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
@@ -1290,8 +1319,9 @@ export default function SupplementJarMesh({
             return (
               <mesh
                 key={`jar-l2-tactile-${i}`}
-                geometry={labelGeo}
+                geometry={labelGeoCentered}
                 material={layer2TactileShellMat}
+                position={[labelCentroid.x, labelCentroid.y, labelCentroid.z]}
                 scale={[sRadial, sY, sRadial]}
                 renderOrder={10 + i}
               />
@@ -1313,7 +1343,7 @@ export default function SupplementJarMesh({
       {/* Layer 3 tactile shells — same construction as Layer 2's but
            scaled a touch more radially so overlapping tactile layers
            still read in order. */}
-      {layer3Tactile && layer3Tex && layer3BumpTex && (
+      {layer3Tactile && layer3Tex && layer3BumpTex && labelGeoCentered && labelCentroid && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
@@ -1322,8 +1352,9 @@ export default function SupplementJarMesh({
             return (
               <mesh
                 key={`jar-l3-tactile-${i}`}
-                geometry={labelGeo}
+                geometry={labelGeoCentered}
                 material={layer3TactileShellMat}
+                position={[labelCentroid.x, labelCentroid.y, labelCentroid.z]}
                 scale={[sRadial, sY, sRadial]}
                 renderOrder={20 + i}
               />

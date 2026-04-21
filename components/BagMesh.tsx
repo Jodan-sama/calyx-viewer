@@ -1373,6 +1373,52 @@ export default function BagMesh({
   useEffect(() => () => { frontLabelGeo?.dispose(); }, [frontLabelGeo]);
   useEffect(() => () => { backLabelGeo?.dispose(); }, [backLabelGeo]);
 
+  // Centered clones of the panel geometries for the tactile shell stack.
+  // Scaling a mesh in three.js pivots around mesh-local origin — if the
+  // panel's vertices are centred on a point other than (0,0,0) (which
+  // they always are, since the bag's front panel lives up at bag-local
+  // y ≈ +0.3 ish) the dome-bevel scale drags the shell toward the group
+  // origin instead of toward the label's own centroid. Translating the
+  // cloned geometry so its bbox-centre is at origin fixes that — we
+  // then reposition each shell mesh at the original centroid, so the
+  // dome bevel actually centres on the label.
+  const [frontLabelGeoCentered, setFrontLabelGeoCentered] = useState<THREE.BufferGeometry | null>(null);
+  const [backLabelGeoCentered, setBackLabelGeoCentered] = useState<THREE.BufferGeometry | null>(null);
+  const [frontLabelCentroid, setFrontLabelCentroid] = useState<THREE.Vector3 | null>(null);
+  const [backLabelCentroid, setBackLabelCentroid] = useState<THREE.Vector3 | null>(null);
+
+  useEffect(() => {
+    if (!frontLabelGeo) {
+      setFrontLabelGeoCentered(null);
+      setFrontLabelCentroid(null);
+      return;
+    }
+    const cloned = frontLabelGeo.clone();
+    cloned.computeBoundingBox();
+    const c = new THREE.Vector3();
+    cloned.boundingBox!.getCenter(c);
+    cloned.translate(-c.x, -c.y, -c.z);
+    setFrontLabelGeoCentered(cloned);
+    setFrontLabelCentroid(c);
+    return () => { cloned.dispose(); };
+  }, [frontLabelGeo]);
+
+  useEffect(() => {
+    if (!backLabelGeo) {
+      setBackLabelGeoCentered(null);
+      setBackLabelCentroid(null);
+      return;
+    }
+    const cloned = backLabelGeo.clone();
+    cloned.computeBoundingBox();
+    const c = new THREE.Vector3();
+    cloned.boundingBox!.getCenter(c);
+    cloned.translate(-c.x, -c.y, -c.z);
+    setBackLabelGeoCentered(cloned);
+    setBackLabelCentroid(c);
+    return () => { cloned.dispose(); };
+  }, [backLabelGeo]);
+
   // ── Animation loop: float + decal rebuild ──────────────────────────────────
   // BASE_Y_FLOAT centres the gentle ±0.02 oscillation in the Default scene;
   // BASE_Y_GROUND drops the bag onto the Smoke scene's reflective floor
@@ -1434,7 +1480,7 @@ export default function BagMesh({
            silhouette look like a solid raised varnish volume from grazing
            angles. Shells ascend in renderOrder so the outermost draws last
            (correct back-to-front blend). */}
-      {labelTactile && frontLabelGeo && frontLabelTex && frontBumpTex && (
+      {labelTactile && frontLabelGeoCentered && frontLabelCentroid && frontLabelTex && frontBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             // t ∈ (0, 1]: normalised height within the dome. The base
@@ -1443,15 +1489,17 @@ export default function BagMesh({
             // with silhouette tapered to TACTILE_DOME_MIN_SCALE.
             // Quadratic (t²) keeps the base broad and pulls the taper
             // into the top third — a dome cross-section, not a cone.
+            // Shell mesh is positioned at the panel's centroid + z so
+            // the scale pivots around the label's own centre.
             const t = (i + 1) / TACTILE_SHELL_COUNT;
             const z = TACTILE_TOTAL_RAISE * t;
             const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
             return (
               <mesh
                 key={`l2f-tactile-${i}`}
-                geometry={frontLabelGeo}
+                geometry={frontLabelGeoCentered}
                 material={frontTactileShellMat}
-                position={[0, 0, z]}
+                position={[frontLabelCentroid.x, frontLabelCentroid.y, frontLabelCentroid.z + z]}
                 scale={[s, s, 1]}
                 renderOrder={10 + i}
               />
@@ -1459,7 +1507,7 @@ export default function BagMesh({
           })}
         </>
       )}
-      {labelTactile && backLabelGeo && backLabelTex && backBumpTex && (
+      {labelTactile && backLabelGeoCentered && backLabelCentroid && backLabelTex && backBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
@@ -1468,9 +1516,9 @@ export default function BagMesh({
             return (
               <mesh
                 key={`l2b-tactile-${i}`}
-                geometry={backLabelGeo}
+                geometry={backLabelGeoCentered}
                 material={backTactileShellMat}
-                position={[0, 0, z]}
+                position={[backLabelCentroid.x, backLabelCentroid.y, backLabelCentroid.z + z]}
                 scale={[s, s, 1]}
                 renderOrder={10 + i}
               />
@@ -1500,7 +1548,7 @@ export default function BagMesh({
       {/* Layer 3 tactile shells — same construction as Layer 2's but
            stacked slightly higher so overlapping tactile layers still
            read in order (Layer 3 sits visibly above Layer 2's stack). */}
-      {layer3Tactile && frontLabelGeo && layer3FrontTex && layer3FrontBumpTex && (
+      {layer3Tactile && frontLabelGeoCentered && frontLabelCentroid && layer3FrontTex && layer3FrontBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
@@ -1509,9 +1557,9 @@ export default function BagMesh({
             return (
               <mesh
                 key={`l3f-tactile-${i}`}
-                geometry={frontLabelGeo}
+                geometry={frontLabelGeoCentered}
                 material={layer3FrontTactileShellMat}
-                position={[0, 0, z]}
+                position={[frontLabelCentroid.x, frontLabelCentroid.y, frontLabelCentroid.z + z]}
                 scale={[s, s, 1]}
                 renderOrder={20 + i}
               />
@@ -1519,7 +1567,7 @@ export default function BagMesh({
           })}
         </>
       )}
-      {layer3Tactile && backLabelGeo && layer3BackTex && layer3BackBumpTex && (
+      {layer3Tactile && backLabelGeoCentered && backLabelCentroid && layer3BackTex && layer3BackBumpTex && (
         <>
           {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
             const t = (i + 1) / TACTILE_SHELL_COUNT;
@@ -1528,9 +1576,9 @@ export default function BagMesh({
             return (
               <mesh
                 key={`l3b-tactile-${i}`}
-                geometry={backLabelGeo}
+                geometry={backLabelGeoCentered}
                 material={layer3BackTactileShellMat}
-                position={[0, 0, z]}
+                position={[backLabelCentroid.x, backLabelCentroid.y, backLabelCentroid.z + z]}
                 scale={[s, s, 1]}
                 renderOrder={20 + i}
               />
