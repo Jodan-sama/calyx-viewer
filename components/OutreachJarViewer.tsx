@@ -218,6 +218,7 @@ export default function OutreachJarViewer({
       layer2Metalness={mat.layer2Metalness ?? 0}
       layer2Roughness={mat.layer2Roughness ?? 0.5}
       layer2Varnish={mat.layer2Varnish ?? false}
+      layer2Tactile={mat.layer2Tactile ?? false}
       layer2Material={mat.layer2Material ?? false}
       layer2MatFinish={mat.layer2MatFinish}
       layer2MatMetalness={mat.layer2MatMetalness}
@@ -226,6 +227,7 @@ export default function OutreachJarViewer({
       layer3Metalness={mat.layer3Metalness ?? 0}
       layer3Roughness={mat.layer3Roughness ?? 0.5}
       layer3Varnish={mat.layer3Varnish ?? false}
+      layer3Tactile={mat.layer3Tactile ?? false}
       layer3Material={mat.layer3Material ?? false}
       layer3MatFinish={mat.layer3MatFinish}
       layer3MatMetalness={mat.layer3MatMetalness}
