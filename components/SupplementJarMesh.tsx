@@ -8,6 +8,7 @@ import {
   mergeGeometries,
   mergeVertices,
 } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { TessellateModifier } from "three/examples/jsm/modifiers/TessellateModifier.js";
 import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
 import { applyPrismaticShader } from "@/lib/foilShaders";
 
@@ -38,36 +39,68 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
-// Tactile tuning — matches BagMesh. The artwork itself stays flat
-// against the jar; the raised look comes from a stack of clear-varnish
-// shells rendered above it, masked by the artwork's alpha. On the jar
-// the shells "raise" via a radial-only scale bump (X and Z, keeping Y
-// as the axial axis), and the dome bevel is applied by shrinking Y on
-// the outer shells so the stack rounds off at the top.
-const TACTILE_SHELL_COUNT = 8;
-/** Max radial scale of the topmost shell. 1.01 = 1% outward. Raising
- *  this past ~1.015 starts to push varnish beyond the jar's own
- *  silhouette at the label's edges. */
-const TACTILE_SHELL_MAX_SCALE = 1.01;
-/** Layer 3's max scale — a touch more than Layer 2 so stacked-tactile
- *  layers still read in order. */
-const TACTILE_SHELL_MAX_SCALE_LAYER3 = 1.014;
-/** Y-axis shrink at the top of the dome (same quadratic curve as
- *  BagMesh). Y is the jar's axial axis — shrinking Y on the outer
- *  shells tapers the dome's top band inward, producing the rounded
- *  side profile. */
-const TACTILE_DOME_MIN_SCALE = 0.88;
-const TACTILE_SHELL_OPACITY = 0.08;
-const TACTILE_SHELL_ROUGHNESS = 0.02;
-const TACTILE_SHELL_CLEARCOAT = 1.0;
-const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.02;
-/** Higher than DECAL_ENV_BASE so the varnish reads as more reflective
- *  than the matte print underneath. */
-const TACTILE_SHELL_ENV_BASE = 1.35;
+// Tactile tuning — matches BagMesh. Single solid mesh per label; the
+// artwork stays flat against the jar and the puck raises via vertex
+// displacement along the cylinder's radial normal. Blurred alpha as
+// the displacement source gives the puck a curved bevelled edge.
+const TACTILE_MAX_EDGE = 0.015;
+const TACTILE_DISPLACE_BLUR_PX = 10;
+/** Peak raise along the vertex normal in jar-local units. Smaller than
+ *  the bag's 0.004 because the jar's target scale is ≈ 1.0 (vs bag's
+ *  5.5×), so the displacement is already world-scale. */
+const TACTILE_DISPLACE_SCALE = 0.008;
+const TACTILE_OPACITY = 0.12;
+const TACTILE_ROUGHNESS = 0.02;
+const TACTILE_CLEARCOAT = 1.0;
+const TACTILE_CLEARCOAT_ROUGHNESS = 0.02;
+const TACTILE_ENV_BASE = 1.35;
 
 /** Builds a greyscale bump-map texture from a source texture's alpha channel.
  *  Plugged into MeshPhysicalMaterial.bumpMap so the varnish only raises the
  *  surface where the artwork is actually opaque. */
+/** Gaussian-blurred alpha, used as displacementMap for the tactile
+ *  finish. Blurring the alpha channel in a temp canvas produces the
+ *  ramped falloff at the edges that shows as a rounded bevel. See
+ *  matching helper in BagMesh for full notes. */
+function buildBlurredAlphaTexture(
+  src: THREE.Texture,
+  blurPx: number
+): THREE.CanvasTexture | null {
+  const img = src.image as
+    | HTMLImageElement
+    | HTMLCanvasElement
+    | ImageBitmap
+    | undefined;
+  if (!img) return null;
+  const w = (img as { width?: number }).width;
+  const h = (img as { height?: number }).height;
+  if (!w || !h) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.filter = `blur(${blurPx}px)`;
+  ctx.drawImage(img as CanvasImageSource, 0, 0);
+  ctx.filter = "none";
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    d[i] = a;
+    d[i + 1] = a;
+    d[i + 2] = a;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.anisotropy = 16;
+  tex.wrapS = THREE.RepeatWrapping;
+  return tex;
+}
+
 function buildAlphaBumpTexture(src: THREE.Texture): THREE.CanvasTexture | null {
   const img = src.image as
     | HTMLImageElement
@@ -622,32 +655,32 @@ export default function SupplementJarMesh({
   const layer2Mat = useMemo(() => makeDecalMat(-4), []);
   const layer3Mat = useMemo(() => makeDecalMat(-8), []);
 
-  // Tactile shell materials — clear-varnish glass rendered above the
-  // artwork decal when Tactile is on. alphaMap tracks the artwork's
-  // alpha (bound in a useEffect further down) so the shell silhouette
-  // matches the artwork footprint. polygonOffset is deep enough to
-  // keep the stack above the artwork regardless of the (small) scale
-  // bump used for the radial raise.
-  const makeTactileShellMat = (offset: number) =>
+  // Tactile material — single clear-glass material per layer. The
+  // puck is a SOLID mesh (not a stack) driven by vertex displacement
+  // along each vertex's radial normal, with blurred alpha shaping a
+  // curved bevel at the edges. Deeper polygonOffset on Layer 3 so it
+  // stacks above Layer 2's puck.
+  const makeTactileMat = (offset: number) =>
     new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       metalness: 0,
-      roughness: TACTILE_SHELL_ROUGHNESS,
-      clearcoat: TACTILE_SHELL_CLEARCOAT,
-      clearcoatRoughness: TACTILE_SHELL_CLEARCOAT_ROUGHNESS,
-      opacity: TACTILE_SHELL_OPACITY,
+      roughness: TACTILE_ROUGHNESS,
+      clearcoat: TACTILE_CLEARCOAT,
+      clearcoatRoughness: TACTILE_CLEARCOAT_ROUGHNESS,
+      opacity: TACTILE_OPACITY,
       transparent: true,
-      alphaTest: 0.02,
+      alphaTest: 0.05,
       side: THREE.FrontSide,
-      envMapIntensity: TACTILE_SHELL_ENV_BASE,
+      envMapIntensity: TACTILE_ENV_BASE,
+      displacementScale: TACTILE_DISPLACE_SCALE,
       polygonOffset: true,
       polygonOffsetFactor: offset,
       polygonOffsetUnits: offset,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const layer2TactileShellMat = useMemo(() => makeTactileShellMat(-12), []);
+  const layer2TactileMat = useMemo(() => makeTactileMat(-12), []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const layer3TactileShellMat = useMemo(() => makeTactileShellMat(-16), []);
+  const layer3TactileMat = useMemo(() => makeTactileMat(-16), []);
 
   // ── Material-mode masked variants (Layer 2 + Layer 3) ────────────────────
   // When a layer's Material checkbox is on, the artwork's alpha becomes a
@@ -819,26 +852,46 @@ export default function SupplementJarMesh({
     return () => { tex?.dispose(); };
   }, [layer3Tex]);
 
-  // Reuse alpha-bump textures as the tactile shell's alphaMap (three.js
-  // samples .g on alphaMap; the bump tex has .g == artwork alpha).
-  useEffect(() => {
-    layer2TactileShellMat.alphaMap = layer2BumpTex;
-    layer2TactileShellMat.needsUpdate = true;
-  }, [layer2BumpTex, layer2TactileShellMat]);
+  // Blurred alpha textures — displacementMap source for the tactile
+  // puck. Regenerated on artwork change; disposed with the texture.
+  const [layer2BlurredAlpha, setLayer2BlurredAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3BlurredAlpha, setLayer3BlurredAlpha] = useState<THREE.CanvasTexture | null>(null);
 
   useEffect(() => {
-    layer3TactileShellMat.alphaMap = layer3BumpTex;
-    layer3TactileShellMat.needsUpdate = true;
-  }, [layer3BumpTex, layer3TactileShellMat]);
+    if (!layer2Tex) { setLayer2BlurredAlpha(null); return; }
+    const tex = buildBlurredAlphaTexture(layer2Tex, TACTILE_DISPLACE_BLUR_PX);
+    setLayer2BlurredAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer2Tex]);
 
-  // Track scene dim / UV dampening on shell materials so they stay in
-  // sync with the rest of the decal stack.
   useEffect(() => {
-    layer2TactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer3TactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer2TactileShellMat.needsUpdate = true;
-    layer3TactileShellMat.needsUpdate = true;
-  }, [envIntensityScale, uvEnvMult, layer2TactileShellMat, layer3TactileShellMat]);
+    if (!layer3Tex) { setLayer3BlurredAlpha(null); return; }
+    const tex = buildBlurredAlphaTexture(layer3Tex, TACTILE_DISPLACE_BLUR_PX);
+    setLayer3BlurredAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3Tex]);
+
+  // Wire alphaMap (original alpha for silhouette clip) + displacementMap
+  // (blurred alpha for rounded bevel) onto each tactile material.
+  useEffect(() => {
+    layer2TactileMat.alphaMap = layer2BumpTex;
+    layer2TactileMat.displacementMap = layer2BlurredAlpha;
+    layer2TactileMat.needsUpdate = true;
+  }, [layer2BumpTex, layer2BlurredAlpha, layer2TactileMat]);
+
+  useEffect(() => {
+    layer3TactileMat.alphaMap = layer3BumpTex;
+    layer3TactileMat.displacementMap = layer3BlurredAlpha;
+    layer3TactileMat.needsUpdate = true;
+  }, [layer3BumpTex, layer3BlurredAlpha, layer3TactileMat]);
+
+  // Track scene dim / UV dampening on tactile materials.
+  useEffect(() => {
+    layer2TactileMat.envMapIntensity = TACTILE_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3TactileMat.envMapIntensity = TACTILE_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer2TactileMat.needsUpdate = true;
+    layer3TactileMat.needsUpdate = true;
+  }, [envIntensityScale, uvEnvMult, layer2TactileMat, layer3TactileMat]);
 
   // Layer 2 artwork material — always artwork mode. Varnish overrides to a
   // glossy clearcoat overprint with a subtle alpha-derived bump. This
@@ -1216,24 +1269,20 @@ export default function SupplementJarMesh({
     return cylindricalUVs(welded, yMin, yMax, seamAngle);
   }, [labelScene]);
 
-  // Centred clone + centroid for the tactile shell stack. See comment
-  // above labelGeo for why the pivot needs to move off the jar's axis.
-  const { labelGeoCentered, labelCentroid } = useMemo(() => {
-    if (!labelGeo.attributes.position) {
-      return { labelGeoCentered: null, labelCentroid: null };
-    }
-    const cloned = labelGeo.clone();
-    cloned.computeBoundingBox();
-    const c = new THREE.Vector3();
-    cloned.boundingBox!.getCenter(c);
-    cloned.translate(-c.x, -c.y, -c.z);
-    return { labelGeoCentered: cloned, labelCentroid: c };
+  // Tessellated clone of the label geometry, for the tactile puck's
+  // vertex displacement. The wrapped-cylinder label probably already
+  // has reasonable segment density, but TessellateModifier further
+  // splits any triangles that still have long edges — ensures the
+  // blurred-alpha displacement resolves cleanly at the rounded bevel.
+  const labelTactileGeo = useMemo(() => {
+    if (!labelGeo.attributes.position) return null;
+    const modifier = new TessellateModifier(TACTILE_MAX_EDGE, 12);
+    return modifier.modify(labelGeo.clone());
   }, [labelGeo]);
 
-  // Dispose the centred clone when it changes / unmounts.
   useEffect(
-    () => () => { labelGeoCentered?.dispose(); },
-    [labelGeoCentered]
+    () => () => { labelTactileGeo?.dispose(); },
+    [labelTactileGeo]
   );
 
   // ── Autofit ───────────────────────────────────────────────────────────────
@@ -1305,29 +1354,18 @@ export default function SupplementJarMesh({
         />
       )}
 
-      {/* Layer 2 tactile shells — clear-varnish stack over the label.
-           Each shell scales X and Z outward from the label's centroid
-           (radial raise) and shrinks Y toward the same centroid
-           (dome bevel), so the side profile of the stack rounds off
-           at the top rather than drifting up/down the jar's axis. */}
-      {layer2Tactile && layer2Tex && layer2BumpTex && labelGeoCentered && labelCentroid && (
-        <>
-          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const sRadial = 1 + (TACTILE_SHELL_MAX_SCALE - 1) * t;
-            const sY = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
-            return (
-              <mesh
-                key={`jar-l2-tactile-${i}`}
-                geometry={labelGeoCentered}
-                material={layer2TactileShellMat}
-                position={[labelCentroid.x, labelCentroid.y, labelCentroid.z]}
-                scale={[sRadial, sY, sRadial]}
-                renderOrder={10 + i}
-              />
-            );
-          })}
-        </>
+      {/* Layer 2 tactile puck — ONE solid displacement mesh. Blurred
+           alpha drives vertex displacement along each vertex's radial
+           normal (outward from the cylinder) so the puck sits proud
+           of the label; the blur ramp at the silhouette reads as a
+           rounded bevel. Original alpha as alphaMap clips the mesh to
+           the artwork footprint. */}
+      {layer2Tactile && layer2Tex && layer2BumpTex && layer2BlurredAlpha && labelTactileGeo && (
+        <mesh
+          geometry={labelTactileGeo}
+          material={layer2TactileMat}
+          renderOrder={10}
+        />
       )}
 
       {/* Layer 3 — same behavior as Layer 2, one render order higher so it
@@ -1340,27 +1378,14 @@ export default function SupplementJarMesh({
         />
       )}
 
-      {/* Layer 3 tactile shells — same construction as Layer 2's but
-           scaled a touch more radially so overlapping tactile layers
-           still read in order. */}
-      {layer3Tactile && layer3Tex && layer3BumpTex && labelGeoCentered && labelCentroid && (
-        <>
-          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const sRadial = 1 + (TACTILE_SHELL_MAX_SCALE_LAYER3 - 1) * t;
-            const sY = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
-            return (
-              <mesh
-                key={`jar-l3-tactile-${i}`}
-                geometry={labelGeoCentered}
-                material={layer3TactileShellMat}
-                position={[labelCentroid.x, labelCentroid.y, labelCentroid.z]}
-                scale={[sRadial, sY, sRadial]}
-                renderOrder={20 + i}
-              />
-            );
-          })}
-        </>
+      {/* Layer 3 tactile puck — same as Layer 2, just one render-order
+           higher so stacked tactile layers draw in order. */}
+      {layer3Tactile && layer3Tex && layer3BumpTex && layer3BlurredAlpha && labelTactileGeo && (
+        <mesh
+          geometry={labelTactileGeo}
+          material={layer3TactileMat}
+          renderOrder={20}
+        />
       )}
     </group>
   );

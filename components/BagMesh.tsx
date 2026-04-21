@@ -3,6 +3,7 @@
 import { useRef, useMemo, useEffect, useState } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { TessellateModifier } from "three/examples/jsm/modifiers/TessellateModifier.js";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { FINISH_PRESETS, UV_GLOW_COLOR, type BagFinish, type BagLighting } from "@/lib/bagMaterial";
@@ -109,40 +110,93 @@ const VARNISH_CLEARCOAT = 1.0;
 const VARNISH_CLEARCOAT_ROUGHNESS = 0.02;
 const VARNISH_ROUGHNESS = 0.05;
 
-// Tactile tuning — models a clear, raised UV-print varnish over the
-// artwork. Implementation: the artwork mesh stays flat on the panel,
-// and a stack of clear-glass shells sits above it, each masked by the
-// artwork's alpha so the shells only appear where the art is. From
-// grazing angles the stacked shell silhouettes read as a solid volume
-// of varnish — without displacing the artwork itself (which would open
-// a see-through gap behind the decal).
-/** Number of clear-varnish shells stacked per tactile layer per side.
- *  More shells → smoother "solid" silhouette at oblique angles but
- *  more draw calls. 8 gives a convincing dome profile when combined
- *  with the bevel scale below. */
-const TACTILE_SHELL_COUNT = 8;
-/** Total raise of the topmost shell above the panel, in group-local
- *  units (the group is scaled 5.5×). Thickens the puck enough to read
- *  clearly at grazing angles — front panels stack +Z, back panels −Z. */
-const TACTILE_TOTAL_RAISE = 0.003;
-/** Smallest X/Y silhouette scale at the top of the dome (shell N−1).
- *  The base shell stays at ~1.0 and each shell above shrinks toward
- *  this value on a quadratic curve — the overall side profile reads
- *  as a rounded dome rather than a flat-top puck. 1.0 disables the
- *  bevel entirely. */
-const TACTILE_DOME_MIN_SCALE = 0.88;
-/** Per-shell clear-varnish material properties. Very low opacity and
- *  near-mirror clearcoat give the "wet UV" look — the printed
- *  artwork shows through clearly while the puck still catches a
- *  sharp gloss highlight. */
-const TACTILE_SHELL_OPACITY = 0.08;
-const TACTILE_SHELL_ROUGHNESS = 0.02;
-const TACTILE_SHELL_CLEARCOAT = 1.0;
-const TACTILE_SHELL_CLEARCOAT_ROUGHNESS = 0.02;
-/** Shell envMap intensity base — pushed higher than the artwork's
- *  (LABEL_ENV_BASE = 0.9) so the varnish reads as more reflective
- *  than the matte printed artwork below. */
-const TACTILE_SHELL_ENV_BASE = 1.35;
+// Tactile tuning — models a clear, raised UV-print varnish as a SOLID
+// single mesh over the artwork. Implementation:
+//   1. Tessellate the flat panel geometry so it has enough vertex
+//      density to hold a vertex-displacement without facets showing.
+//   2. Use the artwork's alpha (blurred) as a displacementMap — pushes
+//      vertices outward along their normal where the artwork is
+//      opaque, flat where it isn't. The blur is what gives the
+//      rounded-edge bevel: blurred alpha ramps from 0 → 1 over a few
+//      pixels, so the side profile is a curved wall instead of a
+//      sharp 90° cliff.
+//   3. Use the artwork's original (un-blurred) alpha as an alphaMap,
+//      clipping the mesh to the artwork's silhouette from above.
+// Net result: a single clear-glass solid with curved top edges,
+// following the artwork's footprint — no stacked-shell blur.
+/** Max triangle edge length (bag-local units) the tessellator will
+ *  accept before subdividing. Smaller = denser = smoother displacement
+ *  at the cost of more verts. 0.012 ≈ ~80 subdivs across a 1-unit
+ *  panel — plenty for the bevel + displacement to read cleanly. */
+const TACTILE_MAX_EDGE = 0.012;
+/** Gaussian blur radius (in source-image pixels) applied to the alpha
+ *  before it becomes a displacementMap. This is what creates the
+ *  curved bevel — hard-edged alpha displaces straight up into a
+ *  vertical wall, blurred alpha ramps outward into a dome. 8px at a
+ *  1024-wide artwork ≈ 0.8% of panel width. */
+const TACTILE_DISPLACE_BLUR_PX = 10;
+/** Peak raise above the panel, in group-local units (group is scaled
+ *  5.5×). Displacement runs along the vertex normal, which points
+ *  outward from the bag surface on both panels — no sign flip
+ *  required per side. */
+const TACTILE_DISPLACE_SCALE = 0.004;
+/** Clear-varnish material tuning. Low opacity keeps the puck
+ *  transparent so the printed artwork reads through; the clearcoat +
+ *  low roughness give it the sharp glossy top catch-light. */
+const TACTILE_OPACITY = 0.12;
+const TACTILE_ROUGHNESS = 0.02;
+const TACTILE_CLEARCOAT = 1.0;
+const TACTILE_CLEARCOAT_ROUGHNESS = 0.02;
+/** Higher than LABEL_ENV_BASE (0.9) so the varnish reads more
+ *  reflective than the matte printed artwork below. */
+const TACTILE_ENV_BASE = 1.35;
+
+/** Builds a Gaussian-blurred greyscale texture from the source's alpha,
+ *  used as a displacementMap for the tactile finish. The blur is what
+ *  gives the raised varnish its rounded bevelled edge — sharp alpha
+ *  produces a vertical cliff instead. */
+function buildBlurredAlphaTexture(
+  src: THREE.Texture,
+  blurPx: number
+): THREE.CanvasTexture | null {
+  const img = src.image as
+    | HTMLImageElement
+    | HTMLCanvasElement
+    | ImageBitmap
+    | undefined;
+  if (!img) return null;
+  const w = (img as { width?: number }).width;
+  const h = (img as { height?: number }).height;
+  if (!w || !h) return null;
+
+  // Pass 1 — draw the source with CSS-blur filter into a temp canvas so
+  // the alpha channel itself gets blurred by the browser's Gaussian
+  // pipeline. Pass 2 — copy the blurred alpha out as grayscale so we
+  // can hand it to three.js as a normal greyscale map (displacementMap
+  // samples .r).
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.filter = `blur(${blurPx}px)`;
+  ctx.drawImage(img as CanvasImageSource, 0, 0);
+  ctx.filter = "none";
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    d[i] = a;
+    d[i + 1] = a;
+    d[i + 2] = a;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.anisotropy = 16;
+  return tex;
+}
 
 /** Builds a greyscale CanvasTexture whose pixel brightness equals the source
  *  texture's alpha channel, so it can be plugged straight into MeshPhysical
@@ -749,36 +803,35 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const backLabelMat = useMemo(buildLabelMat, []);
 
-  // Tactile shell material — clear glossy varnish, shared across all shells
-  // of a given side. `map` stays null (we want clear, not tinted). The
-  // shell's silhouette comes from alphaMap (bound to the artwork's alpha)
-  // so the puck matches the artwork footprint exactly. alphaTest is set
-  // just above zero so the shell renders only on opaque pixels — avoids
-  // ghosting over the bag surface where the artwork is fully transparent.
-  const buildTactileShellMat = () =>
+  // Tactile material — single clear-glass material per panel side.
+  // alphaMap (bound to the artwork's alpha) clips the mesh to the
+  // artwork silhouette; displacementMap (bound to a BLURRED copy of
+  // the same alpha) raises vertices along their normal so the puck
+  // sits proud of the panel with rounded bevelled edges where the
+  // blur ramps down.
+  const buildTactileMat = () =>
     new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       metalness: 0,
-      roughness: TACTILE_SHELL_ROUGHNESS,
-      clearcoat: TACTILE_SHELL_CLEARCOAT,
-      clearcoatRoughness: TACTILE_SHELL_CLEARCOAT_ROUGHNESS,
-      opacity: TACTILE_SHELL_OPACITY,
+      roughness: TACTILE_ROUGHNESS,
+      clearcoat: TACTILE_CLEARCOAT,
+      clearcoatRoughness: TACTILE_CLEARCOAT_ROUGHNESS,
+      opacity: TACTILE_OPACITY,
       transparent: true,
-      alphaTest: 0.02,
+      alphaTest: 0.05,
       side: THREE.FrontSide,
-      envMapIntensity: TACTILE_SHELL_ENV_BASE,
+      envMapIntensity: TACTILE_ENV_BASE,
+      displacementScale: TACTILE_DISPLACE_SCALE,
       polygonOffset: true,
-      // Higher polygon offset bias than the artwork (which is -4) so
-      // shells always sort above the artwork decal regardless of the
-      // (tiny) z-offset, no z-fighting even when the stack is nearly
-      // flush to the artwork.
+      // Bigger bias than the flat artwork (−4) so the raised puck wins
+      // depth at its base even while the two share nearly the same Z.
       polygonOffsetFactor: -12,
       polygonOffsetUnits: -12,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const frontTactileShellMat = useMemo(buildTactileShellMat, []);
+  const frontTactileMat = useMemo(buildTactileMat, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const backTactileShellMat = useMemo(buildTactileShellMat, []);
+  const backTactileMat = useMemo(buildTactileMat, []);
 
   // Alpha-derived bump maps — regenerated whenever the artwork changes. Kept
   // in state so the useEffect that applies them to the material can dispose
@@ -800,29 +853,50 @@ export default function BagMesh({
     return () => { tex?.dispose(); };
   }, [backLabelTex]);
 
-  // Reuse the alpha-bump texture (brightness == artwork alpha) as the
-  // shell material's alphaMap — three.js samples .g on alphaMap so the
-  // bump tex works unmodified. Null it out when the artwork is gone so
-  // the stale silhouette doesn't linger.
-  useEffect(() => {
-    frontTactileShellMat.alphaMap = frontBumpTex;
-    frontTactileShellMat.needsUpdate = true;
-  }, [frontBumpTex, frontTactileShellMat]);
+  // Blurred alpha textures — the displacement map that shapes the
+  // tactile dome. Rebuilt on artwork change; disposed with the texture
+  // so we never leak the canvas-backed GPU buffer.
+  const [frontBlurredAlpha, setFrontBlurredAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [backBlurredAlpha, setBackBlurredAlpha] = useState<THREE.CanvasTexture | null>(null);
 
   useEffect(() => {
-    backTactileShellMat.alphaMap = backBumpTex;
-    backTactileShellMat.needsUpdate = true;
-  }, [backBumpTex, backTactileShellMat]);
+    if (!frontLabelTex) { setFrontBlurredAlpha(null); return; }
+    const tex = buildBlurredAlphaTexture(frontLabelTex, TACTILE_DISPLACE_BLUR_PX);
+    setFrontBlurredAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [frontLabelTex]);
 
-  // envMapIntensity on shells tracks the scene dim and UV dampening so
-  // tactile stays consistent when the user slides the HDRI down or
-  // switches to UV mode (where we kill reflections almost entirely).
   useEffect(() => {
-    frontTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
-    backTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
-    frontTactileShellMat.needsUpdate = true;
-    backTactileShellMat.needsUpdate = true;
-  }, [envIntensityScale, uvEnvMult, frontTactileShellMat, backTactileShellMat]);
+    if (!backLabelTex) { setBackBlurredAlpha(null); return; }
+    const tex = buildBlurredAlphaTexture(backLabelTex, TACTILE_DISPLACE_BLUR_PX);
+    setBackBlurredAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [backLabelTex]);
+
+  // Wire alpha/displacement maps onto the tactile material. Three.js
+  // samples alphaMap from .g and displacementMap from .r — both of our
+  // greyscale canvases have R=G=B so either works.
+  useEffect(() => {
+    frontTactileMat.alphaMap = frontBumpTex;
+    frontTactileMat.displacementMap = frontBlurredAlpha;
+    frontTactileMat.needsUpdate = true;
+  }, [frontBumpTex, frontBlurredAlpha, frontTactileMat]);
+
+  useEffect(() => {
+    backTactileMat.alphaMap = backBumpTex;
+    backTactileMat.displacementMap = backBlurredAlpha;
+    backTactileMat.needsUpdate = true;
+  }, [backBumpTex, backBlurredAlpha, backTactileMat]);
+
+  // envMapIntensity tracks the scene dim / UV dampening so tactile
+  // stays consistent when the user slides HDRI intensity or toggles
+  // the UV blacklight preset.
+  useEffect(() => {
+    frontTactileMat.envMapIntensity = TACTILE_ENV_BASE * envIntensityScale * uvEnvMult;
+    backTactileMat.envMapIntensity = TACTILE_ENV_BASE * envIntensityScale * uvEnvMult;
+    frontTactileMat.needsUpdate = true;
+    backTactileMat.needsUpdate = true;
+  }, [envIntensityScale, uvEnvMult, frontTactileMat, backTactileMat]);
 
   useEffect(() => {
     frontLabelMat.map = frontLabelTex;
@@ -971,46 +1045,66 @@ export default function BagMesh({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const layer3BackMat = useMemo(buildLayer3Mat, []);
 
-  // Layer 3 tactile shell materials — same clear-varnish setup as Layer 2
-  // but with deeper polygonOffset to stay above Layer 2's artwork and
-  // (if active) Layer 2's tactile stack.
-  const buildLayer3TactileShellMat = () =>
+  // Layer 3 tactile material — same clear-varnish setup as Layer 2 but
+  // with a deeper polygonOffset so it stacks above Layer 2's puck.
+  const buildLayer3TactileMat = () =>
     new THREE.MeshPhysicalMaterial({
       color: 0xffffff,
       metalness: 0,
-      roughness: TACTILE_SHELL_ROUGHNESS,
-      clearcoat: TACTILE_SHELL_CLEARCOAT,
-      clearcoatRoughness: TACTILE_SHELL_CLEARCOAT_ROUGHNESS,
-      opacity: TACTILE_SHELL_OPACITY,
+      roughness: TACTILE_ROUGHNESS,
+      clearcoat: TACTILE_CLEARCOAT,
+      clearcoatRoughness: TACTILE_CLEARCOAT_ROUGHNESS,
+      opacity: TACTILE_OPACITY,
       transparent: true,
-      alphaTest: 0.02,
+      alphaTest: 0.05,
       side: THREE.FrontSide,
-      envMapIntensity: TACTILE_SHELL_ENV_BASE,
+      envMapIntensity: TACTILE_ENV_BASE,
+      displacementScale: TACTILE_DISPLACE_SCALE,
       polygonOffset: true,
       polygonOffsetFactor: -16,
       polygonOffsetUnits: -16,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const layer3FrontTactileShellMat = useMemo(buildLayer3TactileShellMat, []);
+  const layer3FrontTactileMat = useMemo(buildLayer3TactileMat, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const layer3BackTactileShellMat = useMemo(buildLayer3TactileShellMat, []);
+  const layer3BackTactileMat = useMemo(buildLayer3TactileMat, []);
+
+  // Layer 3 blurred alpha + displacement/alpha wiring.
+  const [layer3FrontBlurredAlpha, setLayer3FrontBlurredAlpha] = useState<THREE.CanvasTexture | null>(null);
+  const [layer3BackBlurredAlpha, setLayer3BackBlurredAlpha] = useState<THREE.CanvasTexture | null>(null);
 
   useEffect(() => {
-    layer3FrontTactileShellMat.alphaMap = layer3FrontBumpTex;
-    layer3FrontTactileShellMat.needsUpdate = true;
-  }, [layer3FrontBumpTex, layer3FrontTactileShellMat]);
+    if (!layer3FrontTex) { setLayer3FrontBlurredAlpha(null); return; }
+    const tex = buildBlurredAlphaTexture(layer3FrontTex, TACTILE_DISPLACE_BLUR_PX);
+    setLayer3FrontBlurredAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3FrontTex]);
 
   useEffect(() => {
-    layer3BackTactileShellMat.alphaMap = layer3BackBumpTex;
-    layer3BackTactileShellMat.needsUpdate = true;
-  }, [layer3BackBumpTex, layer3BackTactileShellMat]);
+    if (!layer3BackTex) { setLayer3BackBlurredAlpha(null); return; }
+    const tex = buildBlurredAlphaTexture(layer3BackTex, TACTILE_DISPLACE_BLUR_PX);
+    setLayer3BackBlurredAlpha(tex);
+    return () => { tex?.dispose(); };
+  }, [layer3BackTex]);
 
   useEffect(() => {
-    layer3FrontTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer3BackTactileShellMat.envMapIntensity = TACTILE_SHELL_ENV_BASE * envIntensityScale * uvEnvMult;
-    layer3FrontTactileShellMat.needsUpdate = true;
-    layer3BackTactileShellMat.needsUpdate = true;
-  }, [envIntensityScale, uvEnvMult, layer3FrontTactileShellMat, layer3BackTactileShellMat]);
+    layer3FrontTactileMat.alphaMap = layer3FrontBumpTex;
+    layer3FrontTactileMat.displacementMap = layer3FrontBlurredAlpha;
+    layer3FrontTactileMat.needsUpdate = true;
+  }, [layer3FrontBumpTex, layer3FrontBlurredAlpha, layer3FrontTactileMat]);
+
+  useEffect(() => {
+    layer3BackTactileMat.alphaMap = layer3BackBumpTex;
+    layer3BackTactileMat.displacementMap = layer3BackBlurredAlpha;
+    layer3BackTactileMat.needsUpdate = true;
+  }, [layer3BackBumpTex, layer3BackBlurredAlpha, layer3BackTactileMat]);
+
+  useEffect(() => {
+    layer3FrontTactileMat.envMapIntensity = TACTILE_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3BackTactileMat.envMapIntensity = TACTILE_ENV_BASE * envIntensityScale * uvEnvMult;
+    layer3FrontTactileMat.needsUpdate = true;
+    layer3BackTactileMat.needsUpdate = true;
+  }, [envIntensityScale, uvEnvMult, layer3FrontTactileMat, layer3BackTactileMat]);
 
   useEffect(() => {
     layer3FrontMat.map = layer3FrontTex;
@@ -1373,50 +1467,29 @@ export default function BagMesh({
   useEffect(() => () => { frontLabelGeo?.dispose(); }, [frontLabelGeo]);
   useEffect(() => () => { backLabelGeo?.dispose(); }, [backLabelGeo]);
 
-  // Centered clones of the panel geometries for the tactile shell stack.
-  // Scaling a mesh in three.js pivots around mesh-local origin — if the
-  // panel's vertices are centred on a point other than (0,0,0) (which
-  // they always are, since the bag's front panel lives up at bag-local
-  // y ≈ +0.3 ish) the dome-bevel scale drags the shell toward the group
-  // origin instead of toward the label's own centroid. Translating the
-  // cloned geometry so its bbox-centre is at origin fixes that — we
-  // then reposition each shell mesh at the original centroid, so the
-  // dome bevel actually centres on the label.
-  const [frontLabelGeoCentered, setFrontLabelGeoCentered] = useState<THREE.BufferGeometry | null>(null);
-  const [backLabelGeoCentered, setBackLabelGeoCentered] = useState<THREE.BufferGeometry | null>(null);
-  const [frontLabelCentroid, setFrontLabelCentroid] = useState<THREE.Vector3 | null>(null);
-  const [backLabelCentroid, setBackLabelCentroid] = useState<THREE.Vector3 | null>(null);
+  // Tessellated clones of the panel geometries for the tactile mesh.
+  // The extracted GLB panel is low-poly (a handful of triangles), so
+  // vertex-displacement would show as giant facets. TessellateModifier
+  // splits any triangle with an edge longer than TACTILE_MAX_EDGE until
+  // the mesh is dense enough for the displacement + bevel blur to
+  // resolve smoothly. This runs once per artwork change and is cached.
+  const [frontTactileGeo, setFrontTactileGeo] = useState<THREE.BufferGeometry | null>(null);
+  const [backTactileGeo, setBackTactileGeo] = useState<THREE.BufferGeometry | null>(null);
 
   useEffect(() => {
-    if (!frontLabelGeo) {
-      setFrontLabelGeoCentered(null);
-      setFrontLabelCentroid(null);
-      return;
-    }
-    const cloned = frontLabelGeo.clone();
-    cloned.computeBoundingBox();
-    const c = new THREE.Vector3();
-    cloned.boundingBox!.getCenter(c);
-    cloned.translate(-c.x, -c.y, -c.z);
-    setFrontLabelGeoCentered(cloned);
-    setFrontLabelCentroid(c);
-    return () => { cloned.dispose(); };
+    if (!frontLabelGeo) { setFrontTactileGeo(null); return; }
+    const modifier = new TessellateModifier(TACTILE_MAX_EDGE, 12);
+    const dense = modifier.modify(frontLabelGeo.clone());
+    setFrontTactileGeo(dense);
+    return () => { dense.dispose(); };
   }, [frontLabelGeo]);
 
   useEffect(() => {
-    if (!backLabelGeo) {
-      setBackLabelGeoCentered(null);
-      setBackLabelCentroid(null);
-      return;
-    }
-    const cloned = backLabelGeo.clone();
-    cloned.computeBoundingBox();
-    const c = new THREE.Vector3();
-    cloned.boundingBox!.getCenter(c);
-    cloned.translate(-c.x, -c.y, -c.z);
-    setBackLabelGeoCentered(cloned);
-    setBackLabelCentroid(c);
-    return () => { cloned.dispose(); };
+    if (!backLabelGeo) { setBackTactileGeo(null); return; }
+    const modifier = new TessellateModifier(TACTILE_MAX_EDGE, 12);
+    const dense = modifier.modify(backLabelGeo.clone());
+    setBackTactileGeo(dense);
+    return () => { dense.dispose(); };
   }, [backLabelGeo]);
 
   // ── Animation loop: float + decal rebuild ──────────────────────────────────
@@ -1473,58 +1546,26 @@ export default function BagMesh({
         />
       )}
 
-      {/* Layer 2 tactile shells — rendered only when tactile is on. Each
-           shell is the artwork geometry positioned slightly outward along
-           the panel normal, sharing one clear-glass material masked by the
-           artwork's alpha. Stacking enough of them makes the combined
-           silhouette look like a solid raised varnish volume from grazing
-           angles. Shells ascend in renderOrder so the outermost draws last
-           (correct back-to-front blend). */}
-      {labelTactile && frontLabelGeoCentered && frontLabelCentroid && frontLabelTex && frontBumpTex && (
-        <>
-          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            // t ∈ (0, 1]: normalised height within the dome. The base
-            // shell (i=0) sits just above the artwork at near-full
-            // silhouette; the top shell (i=N-1) sits at TOTAL_RAISE
-            // with silhouette tapered to TACTILE_DOME_MIN_SCALE.
-            // Quadratic (t²) keeps the base broad and pulls the taper
-            // into the top third — a dome cross-section, not a cone.
-            // Shell mesh is positioned at the panel's centroid + z so
-            // the scale pivots around the label's own centre.
-            const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const z = TACTILE_TOTAL_RAISE * t;
-            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
-            return (
-              <mesh
-                key={`l2f-tactile-${i}`}
-                geometry={frontLabelGeoCentered}
-                material={frontTactileShellMat}
-                position={[frontLabelCentroid.x, frontLabelCentroid.y, frontLabelCentroid.z + z]}
-                scale={[s, s, 1]}
-                renderOrder={10 + i}
-              />
-            );
-          })}
-        </>
+      {/* Layer 2 tactile puck — ONE mesh per panel. The tessellated
+           geometry carries enough vertex density for the displacement
+           map to raise the artwork region into a solid puck; the
+           blurred-alpha displacementMap ramps vertices upward over a
+           few source-pixels near the silhouette, which reads as a
+           rounded bevel. alphaMap clips the mesh to the artwork's
+           original hard outline so it only renders where art is. */}
+      {labelTactile && frontTactileGeo && frontLabelTex && frontBumpTex && frontBlurredAlpha && (
+        <mesh
+          geometry={frontTactileGeo}
+          material={frontTactileMat}
+          renderOrder={10}
+        />
       )}
-      {labelTactile && backLabelGeoCentered && backLabelCentroid && backLabelTex && backBumpTex && (
-        <>
-          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const z = -TACTILE_TOTAL_RAISE * t;
-            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
-            return (
-              <mesh
-                key={`l2b-tactile-${i}`}
-                geometry={backLabelGeoCentered}
-                material={backTactileShellMat}
-                position={[backLabelCentroid.x, backLabelCentroid.y, backLabelCentroid.z + z]}
-                scale={[s, s, 1]}
-                renderOrder={10 + i}
-              />
-            );
-          })}
-        </>
+      {labelTactile && backTactileGeo && backLabelTex && backBumpTex && backBlurredAlpha && (
+        <mesh
+          geometry={backTactileGeo}
+          material={backTactileMat}
+          renderOrder={10}
+        />
       )}
 
       {/* Layer 3 — optional second artwork layer. Same rules as Layer 2 but
@@ -1548,43 +1589,19 @@ export default function BagMesh({
       {/* Layer 3 tactile shells — same construction as Layer 2's but
            stacked slightly higher so overlapping tactile layers still
            read in order (Layer 3 sits visibly above Layer 2's stack). */}
-      {layer3Tactile && frontLabelGeoCentered && frontLabelCentroid && layer3FrontTex && layer3FrontBumpTex && (
-        <>
-          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const z = TACTILE_TOTAL_RAISE * 1.3 * t;
-            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
-            return (
-              <mesh
-                key={`l3f-tactile-${i}`}
-                geometry={frontLabelGeoCentered}
-                material={layer3FrontTactileShellMat}
-                position={[frontLabelCentroid.x, frontLabelCentroid.y, frontLabelCentroid.z + z]}
-                scale={[s, s, 1]}
-                renderOrder={20 + i}
-              />
-            );
-          })}
-        </>
+      {layer3Tactile && frontTactileGeo && layer3FrontTex && layer3FrontBumpTex && layer3FrontBlurredAlpha && (
+        <mesh
+          geometry={frontTactileGeo}
+          material={layer3FrontTactileMat}
+          renderOrder={20}
+        />
       )}
-      {layer3Tactile && backLabelGeoCentered && backLabelCentroid && layer3BackTex && layer3BackBumpTex && (
-        <>
-          {Array.from({ length: TACTILE_SHELL_COUNT }).map((_, i) => {
-            const t = (i + 1) / TACTILE_SHELL_COUNT;
-            const z = -TACTILE_TOTAL_RAISE * 1.3 * t;
-            const s = 1 - (1 - TACTILE_DOME_MIN_SCALE) * t * t;
-            return (
-              <mesh
-                key={`l3b-tactile-${i}`}
-                geometry={backLabelGeoCentered}
-                material={layer3BackTactileShellMat}
-                position={[backLabelCentroid.x, backLabelCentroid.y, backLabelCentroid.z + z]}
-                scale={[s, s, 1]}
-                renderOrder={20 + i}
-              />
-            );
-          })}
-        </>
+      {layer3Tactile && backTactileGeo && layer3BackTex && layer3BackBumpTex && layer3BackBlurredAlpha && (
+        <mesh
+          geometry={backTactileGeo}
+          material={layer3BackTactileMat}
+          renderOrder={20}
+        />
       )}
     </group>
   );
