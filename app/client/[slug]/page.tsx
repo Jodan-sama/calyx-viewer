@@ -16,6 +16,7 @@ import ImagePreviewModal from "@/components/ImagePreviewModal";
 import FullscreenSlot from "@/components/FullscreenSlot";
 import WigglyLines from "@/components/WigglyLines";
 import LoadingOverlay from "@/components/LoadingOverlay";
+import { useIsMobile } from "@/lib/useIsMobile";
 
 export default function ClientSite({
   params,
@@ -37,6 +38,14 @@ export default function ClientSite({
   // affordance on a 3D hero tile. Cleared via the modal's close button,
   // Escape, or a click on the top/bottom chrome.
   const [fullscreenSet, setFullscreenSet] = useState<ProductSet | null>(null);
+
+  // Gate hero rendering between the desktop 3-up grid and the mobile
+  // single-slot carousel. CSS-only hiding with `hidden md:grid`
+  // wouldn't work here — React still mounts whatever's inside the
+  // hidden branch, so the 3 desktop Canvases would still spin up
+  // WebGL contexts on phones. Conditional rendering ensures only the
+  // tree we actually want renders.
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (!supabaseConfigured) return;
@@ -139,12 +148,10 @@ export default function ClientSite({
             </p>
           ) : (
             <>
-              {/* Desktop: centred brand-logo header above the hero row,
-                  reserving 120px so the layout is stable during asset
-                  load. Hidden on mobile — the logo cell moves into the
-                  2×2 hero grid itself so there are four equal tiles on
-                  narrow screens. */}
-              <div className="mb-12 hidden md:flex items-center justify-center min-h-[120px]">
+              {/* Centred brand-logo header above the hero row on every
+                  breakpoint. 120px is reserved so the layout stays
+                  stable while the logo image decodes. */}
+              <div className="mb-8 md:mb-12 flex items-center justify-center min-h-[120px]">
                 {brand?.logo_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -162,44 +169,38 @@ export default function ClientSite({
                 )}
               </div>
 
-              {/* 3D slots row.
-                  Mobile (<md): 2×2 grid — brand logo in the top-left
-                    cell, three 3D product tiles filling the rest. Half
-                    the canvas area vs the old 1-up stack, so each slot
-                    renders into a much smaller framebuffer.
-                  Tablet (md): 2-up grid of 3 product tiles (logo lives
-                    above the row again).
-                  Desktop (lg+): 3-up row — unchanged. */}
+              {/* Hero 3D slots.
+                  Desktop (md+): 2-up grid on tablet, 3-up row on large.
+                    Each slot mounts its own Canvas — desktop has the
+                    memory headroom for all three to run live.
+                  Mobile (<md): ONE slot at a time as a big card, with
+                    arrow controls to cycle through the other two. Only
+                    the active slot mounts a WebGL context, which is the
+                    only reliable way to keep iOS Safari from OOM-ing on
+                    a page full of 3D models.
+                  Picked via a JS conditional (not CSS `hidden`) so the
+                  un-shown tree never mounts and never spins up unused
+                  WebGL contexts. */}
               <section className="mb-16">
-                <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6 lg:gap-8">
-                  {/* Logo cell — visible only on the mobile 2×2 grid.
-                       Square aspect matches the ProductSlot tiles next
-                       to it so the grid reads as four equal cards. */}
-                  <div className="md:hidden relative aspect-square rounded-[20px] overflow-hidden border border-[#272724]/10 bg-white/70 flex items-center justify-center p-6">
-                    {brand?.logo_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={brand.logo_url}
-                        alt={brand.name}
-                        className="max-w-full max-h-full object-contain select-none"
-                        draggable={false}
+                {isMobile ? (
+                  <MobileHeroCarousel
+                    heroBySlot={heroBySlot}
+                    onOpenImage={(src, alt) => setPreview({ src, alt })}
+                    onExpand={(s) => setFullscreenSet(s)}
+                  />
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+                    {[1, 2, 3].map((i) => (
+                      <ProductSlot
+                        key={i}
+                        index={i}
+                        set={heroBySlot.get(i)}
+                        onOpenImage={(src, alt) => setPreview({ src, alt })}
+                        onExpand={(s) => setFullscreenSet(s)}
                       />
-                    ) : (
-                      <span className="text-[10px] tracking-[0.24em] uppercase text-[#272724]/30 select-none">
-                        Brand Logo
-                      </span>
-                    )}
+                    ))}
                   </div>
-                  {[1, 2, 3].map((i) => (
-                    <ProductSlot
-                      key={i}
-                      index={i}
-                      set={heroBySlot.get(i)}
-                      onOpenImage={(src, alt) => setPreview({ src, alt })}
-                      onExpand={(s) => setFullscreenSet(s)}
-                    />
-                  ))}
-                </div>
+                )}
               </section>
 
               {/* Digital Previews grid — 3 columns on mobile per the
@@ -251,6 +252,97 @@ export default function ClientSite({
           before per-brand theming takes over. Stays up for at least 3
           seconds to give assets a predictable decode window. */}
       <LoadingOverlay loading={loading} />
+    </div>
+  );
+}
+
+/**
+ * Mobile-only carousel for the client hero section. Renders ONE
+ * ProductSlot at a time with left/right arrow controls and dot
+ * indicators. The `key={current}` on the rendered ProductSlot forces
+ * React to unmount the outgoing slot's Canvas when the user taps an
+ * arrow — so only one live WebGL context exists at any moment, which
+ * is the only layout that reliably survives iOS Safari's per-tab
+ * memory ceiling on the client surface.
+ *
+ * Empty slots (no saved set) still cycle through the carousel so the
+ * indicator reflects the page's three-slot structure; the empty-state
+ * placeholder renders inside ProductSlot.
+ */
+function MobileHeroCarousel({
+  heroBySlot,
+  onOpenImage,
+  onExpand,
+}: {
+  heroBySlot: Map<number, ProductSet>;
+  onOpenImage: (src: string, alt: string) => void;
+  onExpand: (set: ProductSet) => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const SLOT_INDICES = [1, 2, 3] as const;
+  const currentSlotNumber = SLOT_INDICES[activeIndex];
+  const currentSet = heroBySlot.get(currentSlotNumber);
+
+  const prev = () =>
+    setActiveIndex((i) => (i - 1 + SLOT_INDICES.length) % SLOT_INDICES.length);
+  const next = () =>
+    setActiveIndex((i) => (i + 1) % SLOT_INDICES.length);
+
+  return (
+    <div className="relative w-full max-w-md mx-auto">
+      {/* Active slot. `key` forces a remount when the index changes so
+          the previous Canvas is torn down and its WebGL context
+          released before the next one mounts. */}
+      <ProductSlot
+        key={currentSlotNumber}
+        index={currentSlotNumber}
+        set={currentSet}
+        onOpenImage={onOpenImage}
+        onExpand={onExpand}
+      />
+
+      {/* Left / right arrows — positioned at the tile edges so they're
+          easy to thumb-tap without covering the product. z-index sits
+          above the tile's group-hover overlays. */}
+      <button
+        type="button"
+        onClick={prev}
+        aria-label="Previous product"
+        className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-white/85 backdrop-blur-sm text-[#272724] flex items-center justify-center shadow-[0_1px_4px_rgba(0,0,0,0.08)] active:scale-95 transition"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path d="M10.5 3L5 8l5.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={next}
+        aria-label="Next product"
+        className="absolute right-2 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-white/85 backdrop-blur-sm text-[#272724] flex items-center justify-center shadow-[0_1px_4px_rgba(0,0,0,0.08)] active:scale-95 transition"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path d="M5.5 3L11 8l-5.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {/* Dot indicator below the tile — taps jump directly to that
+          slot. Active dot is filled; inactives are faint so the
+          active position reads at a glance. */}
+      <div className="flex gap-2 justify-center mt-4">
+        {SLOT_INDICES.map((slot, idx) => (
+          <button
+            key={slot}
+            type="button"
+            onClick={() => setActiveIndex(idx)}
+            aria-label={`Go to product ${slot}`}
+            className={`h-2 rounded-full transition-all ${
+              idx === activeIndex
+                ? "w-6 bg-[#272724]"
+                : "w-2 bg-[#272724]/25 hover:bg-[#272724]/40"
+            }`}
+          />
+        ))}
+      </div>
     </div>
   );
 }
