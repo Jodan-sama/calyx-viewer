@@ -299,13 +299,17 @@ export default function CalyxPreview() {
   );
 
   // Every upload handler runs the picked file through
-  // `convertImageToWebPLogged` before it hits state. Resolution is
-  // preserved exactly; only the container changes (PNG/JPEG → WebP at
-  // quality 0.95, which is visually identical but typically 30–50%
-  // smaller). The File we store in state is the converted one, so
-  // everything downstream — the blob URL handed to three.js, the
-  // `frontFile` used by Save-to-Outreach, the Supabase upload — sees
-  // WebP bytes without any further wiring.
+  // `convertImageToWebPLogged` before it hits state. The helper
+  // re-encodes to WebP at quality 0.95 AND caps the longest edge at
+  // 2048 px (see DEFAULT_UPLOAD_MAX_DIMENSION in lib/image.ts). The
+  // cap keeps Supabase storage + client download size proportional
+  // to what's actually rendered — a 4 K source upload would burn
+  // ~60 MB of GPU texture memory each on the client surface, which
+  // matters more on phones than the extra pixels ever did on screen.
+  // The File we store in state is the converted one, so everything
+  // downstream — the blob URL handed to three.js, the `frontFile`
+  // used by Save-to-Outreach, the Supabase upload — sees the
+  // capped WebP bytes without any further wiring.
   const handleFrontUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const raw = e.target.files?.[0];
