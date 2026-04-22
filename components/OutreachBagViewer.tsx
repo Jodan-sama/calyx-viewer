@@ -9,6 +9,8 @@ import {
   Cloud,
   Clouds,
   MeshReflectorMaterial,
+  AdaptiveDpr,
+  PerformanceMonitor,
 } from "@react-three/drei";
 import * as THREE from "three";
 import BagMesh from "./BagMesh";
@@ -353,6 +355,19 @@ export default function OutreachBagViewer({
         pointerEvents: interactive ? "auto" : "none",
       }}
     >
+      {/* Adaptive performance: PerformanceMonitor measures the
+          rolling FPS and mutates `state.performance.current` (0–1);
+          AdaptiveDpr reads that value and scales the canvas DPR
+          accordingly. When the GPU is comfortable both stay idle
+          and the viewer renders at full DPR; when frames start
+          dropping — typical on mid-range laptops during scroll or
+          camera motion — DPR drops as low as 50% of initial, which
+          cuts fillrate ~4× and usually restores 60 fps. When load
+          subsides the DPR ramps back up. Lighting, materials, and
+          every saved visual detail are unchanged; only pixel
+          density reacts. */}
+      <PerformanceMonitor />
+      <AdaptiveDpr />
       {canvasBg && <color attach="background" args={[canvasBg]} />}
       {customRig ? (
         <ambientLight

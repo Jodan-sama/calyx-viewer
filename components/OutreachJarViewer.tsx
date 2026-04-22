@@ -9,6 +9,8 @@ import {
   Cloud,
   Clouds,
   MeshReflectorMaterial,
+  AdaptiveDpr,
+  PerformanceMonitor,
 } from "@react-three/drei";
 import * as THREE from "three";
 import SupplementJarMesh from "./SupplementJarMesh";
@@ -312,6 +314,11 @@ export default function OutreachJarViewer({
         pointerEvents: interactive ? "auto" : "none",
       }}
     >
+      {/* Adaptive DPR — see OutreachBagViewer for the full rationale.
+          Only changes pixel density during slow frames; materials,
+          lighting, and saved visual details are untouched. */}
+      <PerformanceMonitor />
+      <AdaptiveDpr />
       {canvasBg && <color attach="background" args={[canvasBg]} />}
       {customRig ? (
         <ambientLight
