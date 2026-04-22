@@ -321,3 +321,70 @@ export function withUVLighting(
   if (mat.lighting === "uv") return mat;
   return { ...mat, lighting: "uv" };
 }
+
+/** True when the material has a mosaic source image ready to be remixed —
+ *  i.e. the slot was saved with at least one layer using the Mosaic finish.
+ *  Surfaces the "Mosaic Cycle" button only on designs that will actually
+ *  change when cycled; designs without a mosaic source render the same
+ *  image regardless of seed, so the button would be pointless.
+ *
+ *  Checked via the source URL rather than per-layer finish flags because
+ *  Layer 1 uses `finish === "mosaic"` while Layers 2/3 opt in via
+ *  `layer*MatFinish === "mosaic"` plus the Material toggle. The source URL
+ *  is the one field that unambiguously means "this design has a mosaic
+ *  pattern available to remix". */
+export function hasMosaicLayer(mat: BagMaterial | null | undefined): boolean {
+  if (!mat) return false;
+  return Boolean(mat.mosaicSourceImageUrl);
+}
+
+/** Return `mat` with every per-layer mosaic crop seed replaced by a fresh
+ *  random value, plus a new random zoom and a coin-flipped mirror toggle.
+ *  The source URL (`mosaicSourceImageUrl`) is left UNTOUCHED — BagMesh's
+ *  texture load is keyed on that URL, so keeping it constant means cycling
+ *  re-uses the cached THREE.Texture and only mutates its offset/repeat/
+ *  center matrix. Effectively free per frame, zero network traffic.
+ *
+ *  Zoom stays within 0.5–1.8: below 0.5 the crop gets too tight to read as
+ *  a pattern, above ~1.8 the RepeatWrapping seams start to dominate. This
+ *  band keeps every cycled result inside the aesthetic the studio user
+ *  would have parked the slider in at save time.
+ *
+ *  `mat === null/undefined` returns the input unchanged — callers should
+ *  gate on `hasMosaicLayer` first. */
+export function randomizeMosaicSeeds(
+  mat: BagMaterial | null | undefined
+): BagMaterial | null | undefined {
+  if (!mat) return mat;
+  const zoom = 0.5 + Math.random() * 1.3;
+  const flip = () => Math.random() < 0.5;
+  const seed = () => Math.random();
+  // Small mirror-rotation variance (±12°) for the jar's HP-Hyper style
+  // diagonal patterns. Bag ignores the *MirrorRotation fields entirely.
+  const rot = () => (Math.random() - 0.5) * 0.42;
+  return {
+    ...mat,
+    mosaicZoom: zoom,
+    mosaicMirror: flip(),
+    mosaicMirrorRotation: rot(),
+    labelMosaicMirrorRotation: rot(),
+    layer2MosaicMirrorRotation: rot(),
+    layer3MosaicMirrorRotation: rot(),
+    mosaicOffsetU: seed(),
+    mosaicOffsetV: seed(),
+    mosaicFlipX: flip(),
+    mosaicFlipY: flip(),
+    labelMosaicOffsetU: seed(),
+    labelMosaicOffsetV: seed(),
+    labelMosaicFlipX: flip(),
+    labelMosaicFlipY: flip(),
+    layer2MosaicOffsetU: seed(),
+    layer2MosaicOffsetV: seed(),
+    layer2MosaicFlipX: flip(),
+    layer2MosaicFlipY: flip(),
+    layer3MosaicOffsetU: seed(),
+    layer3MosaicOffsetV: seed(),
+    layer3MosaicFlipX: flip(),
+    layer3MosaicFlipY: flip(),
+  };
+}

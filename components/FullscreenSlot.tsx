@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { ProductSet } from "@/lib/types";
-import { hasUVLayer, withUVLighting } from "@/lib/bagMaterial";
+import {
+  hasMosaicLayer,
+  hasUVLayer,
+  randomizeMosaicSeeds,
+  withUVLighting,
+} from "@/lib/bagMaterial";
 import UVToggleButton from "./UVToggleButton";
+import MosaicCycleButton from "./MosaicCycleButton";
 
 const OutreachBagViewer = dynamic(() => import("./OutreachBagViewer"), {
   ssr: false,
@@ -42,9 +48,26 @@ export default function FullscreenSlot({
   // backdrop stays dark enough for the fluorescent glow to read.
   const [uvOn, setUvOn] = useState(false);
   const canToggleUV = hasUVLayer(set.material);
-  const effectiveMaterial = canToggleUV
-    ? withUVLighting(set.material, uvOn)
-    : set.material;
+
+  // Mosaic Cycle override — independent of the card-level state in
+  // OutreachSlot. Opening the fullscreen modal starts with the saved
+  // seeds (cycleTick === 0); each tap reshuffles. Intentionally scoped
+  // to this modal so the user can reshuffle at full size without
+  // affecting the small-card preview beneath.
+  const [cycleTick, setCycleTick] = useState(0);
+  const canCycleMosaic = hasMosaicLayer(set.material);
+
+  // Memoise to keep randomizeMosaicSeeds from regenerating on every
+  // parent re-render — see the matching comment in OutreachSlot.
+  const effectiveMaterial = useMemo(() => {
+    const uvMat = canToggleUV
+      ? withUVLighting(set.material, uvOn)
+      : set.material;
+    return canCycleMosaic && cycleTick > 0
+      ? randomizeMosaicSeeds(uvMat)
+      : uvMat;
+  }, [set.material, canToggleUV, canCycleMosaic, uvOn, cycleTick]);
+
   const transparent = !uvOn && set.material?.backgroundMode === "transparent";
 
   const viewer = set.product_type === "supplement-jar" ? (
@@ -80,6 +103,12 @@ export default function FullscreenSlot({
           {set.title}
         </span>
         <div className="flex items-center gap-3">
+          {canCycleMosaic && (
+            <MosaicCycleButton
+              onClick={() => setCycleTick((t) => t + 1)}
+              variant="bar"
+            />
+          )}
           {canToggleUV && (
             <UVToggleButton
               active={uvOn}
