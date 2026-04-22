@@ -30,6 +30,7 @@ import {
 import type { SceneEnvironment } from "@/lib/types";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useInViewport } from "@/lib/useInViewport";
+import ShaderPrecompile from "./ShaderPrecompile";
 
 interface Props {
   /** Front-panel artwork. Null → default Calyx bag front. */
@@ -363,6 +364,11 @@ export default function OutreachBagViewer({
       )}
 
       <Suspense fallback={null}>
+        {/* Batch-compile every material's shader program in one
+            sweep so the user sees a single transition from blank to
+            fully-rendered instead of watching foil/prismatic/multi-
+            chrome pop in serially as each compile finishes. */}
+        <ShaderPrecompile />
         {/* HDRI environment — rave/UV presets still force studio + low
             intensity because neither is a valid drei preset. UV goes
             even lower than rave since fluorescent pigment response

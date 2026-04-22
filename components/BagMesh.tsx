@@ -383,6 +383,15 @@ function buildLabelGeo(
   return geo;
 }
 
+// Upper bound on the longest edge of the CanvasTexture we create for
+// an uploaded artwork. 2048 px stays crisp at retina on every viewing
+// size (client tiles cap around 800 px, even the fullscreen modal
+// rarely exceeds 1200 px) while capping GPU texture memory at
+// ≈ 16 MB per texture instead of the 60-100 MB a raw 4 K upload
+// would consume. Uploads are saved at their original resolution in
+// Supabase — this cap only applies to the in-memory GPU copy.
+const MAX_LABEL_TEXTURE_DIMENSION = 2048;
+
 // Shared label-texture loader: decodes the image, zeroes pure-transparent
 // pixels (fixes haloing on PNG alpha), and wraps it in a CanvasTexture.
 async function loadLabelTexture(
@@ -396,11 +405,25 @@ async function loadLabelTexture(
     });
     if (signal.cancelled) return null;
 
+    // Fit within the max dimension preserving aspect. `drawImage`
+    // scales during the blit — avoids a separate downsample pass.
+    let w = bitmap.width;
+    let h = bitmap.height;
+    const longest = Math.max(w, h);
+    if (longest > MAX_LABEL_TEXTURE_DIMENSION) {
+      const scale = MAX_LABEL_TEXTURE_DIMENSION / longest;
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+    }
+
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-    ctx.drawImage(bitmap, 0, 0);
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    // Release the source bitmap — the canvas now owns the pixels we
+    // need and the bitmap can be large for 4-K-plus source art.
+    bitmap.close();
 
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data;
