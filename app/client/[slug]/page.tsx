@@ -120,6 +120,12 @@ export default function ClientSite({
 
       {/* Centered logo header, no admin chrome */}
       <header className="relative z-10 flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
+        <a
+          href="tel:+17243037481"
+          className="absolute left-[calc(25%-40px)] sm:left-1/4 -translate-x-1/2 text-[#101820] text-[8px] sm:text-[clamp(9px,1.5vw,20px)] font-light tracking-[0.02em] sm:tracking-[0.1em] hover:opacity-60 transition-opacity whitespace-nowrap"
+        >
+          724-303-7481
+        </a>
         <Image
           src="/calyx-logo.svg"
           alt="Calyx Containers"
@@ -128,6 +134,12 @@ export default function ClientSite({
           priority
           style={{ height: 42, width: "auto" }}
         />
+        <a
+          href="mailto:info@calyxcontainers.com"
+          className="absolute left-[calc(75%+40px)] sm:left-3/4 -translate-x-1/2 text-[#101820] text-[8px] sm:text-[clamp(9px,1.5vw,20px)] font-light tracking-[0.02em] sm:tracking-[0.1em] hover:opacity-60 transition-opacity whitespace-nowrap"
+        >
+          info@calyxcontainers.com
+        </a>
       </header>
 
       {/* Body */}
