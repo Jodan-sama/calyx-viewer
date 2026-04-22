@@ -252,9 +252,16 @@ export const DEFAULT_MATERIAL: BagMaterial = {
   labelMaterial: false,
 };
 
-/** Resolve the effective surface numbers for a material. */
+/** Resolve the effective surface numbers for a material. Custom and
+ *  Mosaic both treat the base `metalness` / `roughness` fields as
+ *  user-tunable — Custom has no preset to fall back on, and Mosaic's
+ *  preset is only a starting suggestion (the imagery carries most of
+ *  the look, so fine-tuning the surface makes a meaningful visual
+ *  difference). Every other finish is a fixed preset. Mirrors the
+ *  `matFinish === "custom" || matFinish === "mosaic"` branch already
+ *  used by BagMesh / SupplementJarMesh's per-layer resolver. */
 export function resolveSurface(m: BagMaterial): FinishPreset {
-  if (m.finish === "custom") {
+  if (m.finish === "custom" || m.finish === "mosaic") {
     return { metalness: m.metalness, roughness: m.roughness };
   }
   return FINISH_PRESETS[m.finish] ?? FINISH_PRESETS.metallic;
