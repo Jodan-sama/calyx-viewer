@@ -192,37 +192,7 @@ export default function OutreachBagViewer({
   transparent = false,
   environment: envProp,
 }: Props) {
-  // Mobile flag — hoisted early so we can downgrade the bag's Layer-1
-  // finish and suppress the per-layer Material-masked cutouts before
-  // the props flow into BagMesh. Those features each spawn a unique
-  // WebGL shader program on first render (MaskedSet = 4 variants ×
-  // 2 sides × 2 layers = 16 potential compiles, plus foil's
-  // holographic texture and prismatic's diffraction shader), and
-  // mobile GPUs compile shaders serially — user sees this as "the
-  // label loading three materials one at a time" before settling.
-  // On a phone tile nobody can appreciate the difference between a
-  // gloss decal and a prismatic cutout anyway; fullscreen modal
-  // still renders the saved finish exactly.
-  const isMobileFlag = useIsMobile();
-  const isUVEarly = material?.lighting === "uv";
-  const forceBaseline = isMobileFlag && !isUVEarly;
-
-  const mat: BagMaterial = (() => {
-    const m = material ?? DEFAULT_MATERIAL;
-    if (!forceBaseline) return m;
-    // Mobile baseline — force the cheapest-to-render configuration
-    // regardless of what was saved. Visual regressions here are
-    // acceptable because any phone tile is <50% of a desktop tile
-    // in CSS pixels, so the fancier finishes were never going to be
-    // legible at that size. UV slots bypass this via `isUVEarly`.
-    return {
-      ...m,
-      finish: m.finish === "custom" ? "custom" : "gloss",
-      labelMaterial: false,
-      layer2Material: false,
-      layer3Material: false,
-    };
-  })();
+  const mat: BagMaterial = material ?? DEFAULT_MATERIAL;
   const surface = resolveSurface(mat);
   const isRave = mat.lighting === "rave";
   const isUV = mat.lighting === "uv";
@@ -311,11 +281,8 @@ export default function OutreachBagViewer({
   // cubemap + reflector render target, and pause the render loop when
   // the slot scrolls out of viewport. The outer wrapper below owns the
   // IntersectionObserver ref so the observed box matches what the user
-  // sees on screen. `isMobileFlag` / `forceBaseline` are computed above
-  // (before `mat`) so the mesh-level downgrades can use them too; we
-  // re-alias them here with the viewer-local names the lower code
-  // already reads.
-  const isMobile = isMobileFlag;
+  // sees on screen.
+  const isMobile = useIsMobile();
   const outerRef = useRef<HTMLDivElement>(null);
   const inViewport = useInViewport(outerRef);
 
@@ -324,7 +291,7 @@ export default function OutreachBagViewer({
   // no saved custom-light rig, no Smoke / fog / gradient / flat colour
   // fill, HDRI forced to drei's Warehouse preset. UV slots are exempt
   // because the fluorescent-glow preview is their whole point.
-  const forceMobileBaseline = forceBaseline;
+  const forceMobileBaseline = isMobile && !isUV;
 
   const customRig = forceMobileBaseline ? false : hasCustomRig(mat);
   const bgMode = forceMobileBaseline
