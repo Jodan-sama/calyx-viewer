@@ -119,15 +119,29 @@ export default function ClientSite({
       </div>
 
       {/* Centered logo header, no admin chrome */}
-      <header className="relative z-10 flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
-        <Image
-          src="/calyx-logo.svg"
-          alt="Calyx Containers"
-          width={160}
-          height={42}
-          priority
-          style={{ height: 42, width: "auto" }}
-        />
+      <header className="relative z-10 flex-shrink-0 grid grid-cols-3 items-center px-6 sm:px-10 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
+        <a
+          href="tel:+17243037481"
+          className="justify-self-start text-[#101820] text-xs sm:text-sm font-light tracking-[0.18em] hover:opacity-60 transition-opacity hidden sm:block"
+        >
+          724-303-7481
+        </a>
+        <div className="justify-self-center col-start-2">
+          <Image
+            src="/calyx-logo.svg"
+            alt="Calyx Containers"
+            width={160}
+            height={42}
+            priority
+            style={{ height: 42, width: "auto" }}
+          />
+        </div>
+        <a
+          href="mailto:info@calyxcontainers.com"
+          className="justify-self-end text-[#101820] text-xs sm:text-sm font-light tracking-[0.18em] hover:opacity-60 transition-opacity hidden sm:block"
+        >
+          info@calyxcontainers.com
+        </a>
       </header>
 
       {/* Body */}
