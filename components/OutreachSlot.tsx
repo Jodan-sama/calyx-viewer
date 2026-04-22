@@ -2,10 +2,16 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProductSet } from "@/lib/types";
-import { hasUVLayer, withUVLighting } from "@/lib/bagMaterial";
+import {
+  hasMosaicLayer,
+  hasUVLayer,
+  randomizeMosaicSeeds,
+  withUVLighting,
+} from "@/lib/bagMaterial";
 import UVToggleButton from "@/components/UVToggleButton";
+import MosaicCycleButton from "@/components/MosaicCycleButton";
 
 const SLOT_LOADER = (
   <div className="w-full h-full flex items-center justify-center bg-[#f0f2f7]">
@@ -66,12 +72,49 @@ export function ProductSlot({
   // appears on designs with something that will actually glow.
   const [uvOn, setUvOn] = useState(false);
 
+  // Mosaic Cycle override — bumped each time the user taps the MOSAIC pill
+  // on a slot whose design uses the Mosaic finish. Each bump re-runs
+  // randomizeMosaicSeeds to generate a fresh zoom + mirror + per-layer
+  // offset/flip set, which the viewer picks up via its useEffect deps.
+  // The source URL stays fixed so BagMesh's texture load does NOT refetch
+  // — the cached THREE.Texture just gets a new offset/repeat matrix, which
+  // is effectively free. Starts at 0 (saved seed untouched); the useMemo
+  // below only regenerates once `cycleTick > 0`.
+  const [cycleTick, setCycleTick] = useState(0);
+
+  // Preload the mosaic source image the moment the slot mounts. BagMesh
+  // will fetch it again when it finally runs, but by then the bytes are in
+  // the HTTP cache so the first render is instant. Cheap on slots without
+  // a mosaic source (early-return keeps it a no-op).
+  const mosaicSourceUrl = set?.material?.mosaicSourceImageUrl;
+  useEffect(() => {
+    if (!mosaicSourceUrl) return;
+    const img = new Image();
+    img.src = mosaicSourceUrl;
+  }, [mosaicSourceUrl]);
+
+  // Compose the material fed to the viewer once per [set, uvOn, cycleTick]
+  // rather than on every render. Must be memoised because
+  // randomizeMosaicSeeds is non-pure (fresh random numbers each call) —
+  // without memoisation every parent re-render would invalidate the mosaic
+  // uniforms and thrash BagMesh's useEffect deps.
+  const effectiveMaterial = useMemo(() => {
+    if (!set) return null;
+    const isFlat = set.kind === "flat-image";
+    if (isFlat) return set.material;
+    const canUV = hasUVLayer(set.material);
+    const canCycle = hasMosaicLayer(set.material);
+    // UV first: the toggle overrides saved `lighting`. Cycle second: its
+    // mosaic* fields are independent, so compose order is irrelevant for
+    // correctness and we keep UV-before-mosaic for readability.
+    const uvMat = canUV ? withUVLighting(set.material, uvOn) : set.material;
+    return canCycle && cycleTick > 0 ? randomizeMosaicSeeds(uvMat) : uvMat;
+  }, [set, uvOn, cycleTick]);
+
   if (set) {
     const isFlat = set.kind === "flat-image";
     const canToggleUV = !isFlat && hasUVLayer(set.material);
-    const effectiveMaterial = canToggleUV
-      ? withUVLighting(set.material, uvOn)
-      : set.material;
+    const canCycleMosaic = !isFlat && hasMosaicLayer(set.material);
     // When the slot was saved with Background → Transparent in the
     // studio, skip the slot-card's flat blue fill so the page
     // underneath (e.g. the client site's wavy lines) reads through
@@ -134,6 +177,15 @@ export function ProductSlot({
             onClick={() => setUvOn((v) => !v)}
             variant="overlay"
           />
+        )}
+
+        {/* Mosaic Cycle — bottom-right so it doesn't collide with the
+            UV pill (top-left) or the Expand/Edit affordances (top-
+            right). Client + admin both see it; admins benefit from a
+            quick reshuffle preview when reviewing a slot before
+            shipping it to the client surface. */}
+        {canCycleMosaic && (
+          <MosaicCycleButton onClick={() => setCycleTick((t) => t + 1)} />
         )}
         {isFlat && (
           <span className="absolute top-3 left-3 text-[9px] font-semibold tracking-[0.18em] uppercase px-2 py-1 rounded-full bg-white/85 text-purple-700 pointer-events-none">
