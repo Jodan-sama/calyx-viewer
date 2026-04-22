@@ -186,7 +186,25 @@ export default function OutreachJarViewer({
   transparent = false,
   environment: envProp,
 }: Props) {
-  const mat: BagMaterial = material ?? DEFAULT_MATERIAL;
+  // See OutreachBagViewer for the full explanation — downgrading the
+  // Layer-1 finish and killing the per-layer Material masks on mobile
+  // prevents the long chain of WebGL shader-program compilations that
+  // the user sees as "the label loading three materials one at a time."
+  const isMobileFlag = useIsMobile();
+  const isUVEarly = material?.lighting === "uv";
+  const forceBaseline = isMobileFlag && !isUVEarly;
+
+  const mat: BagMaterial = (() => {
+    const m = material ?? DEFAULT_MATERIAL;
+    if (!forceBaseline) return m;
+    return {
+      ...m,
+      finish: m.finish === "custom" ? "custom" : "gloss",
+      labelMaterial: false,
+      layer2Material: false,
+      layer3Material: false,
+    };
+  })();
   const surface = resolveSurface(mat);
   const env = envProp ?? "default";
   const isSmoke = env === "smoke";
@@ -263,13 +281,15 @@ export default function OutreachJarViewer({
   );
 
   // Mobile performance overrides — see OutreachBagViewer for rationale.
-  const isMobile = useIsMobile();
+  // Re-aliasing the flags computed at the top of the component so the
+  // viewer-local names below still read correctly.
+  const isMobile = isMobileFlag;
   const outerRef = useRef<HTMLDivElement>(null);
   const inViewport = useInViewport(outerRef);
 
   // Mobile baseline — see OutreachBagViewer for the full explanation.
   // UV slots bypass this so their fluorescent-glow preview stays intact.
-  const forceMobileBaseline = isMobile && !isUV;
+  const forceMobileBaseline = forceBaseline;
 
   const customRig = forceMobileBaseline ? false : hasCustomRig(mat);
   const bgMode = forceMobileBaseline
