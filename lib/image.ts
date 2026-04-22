@@ -1,14 +1,20 @@
 /**
  * Upload-time image compression helpers.
  *
- * Philosophy: never resample, never crop — the user's resolution is
- * sacred. We just re-encode to a more efficient container.
+ * Re-encodes to WebP and caps the longest edge at a max dimension
+ * (default 2048 px). The cap is important: uploaded artwork at 4 K+
+ * source resolution burns ~60 MB of GPU texture memory each when
+ * displayed in the client surface — multiplied across three hero
+ * slots that's enough to crash iOS Safari even on the 17 Pro Max.
+ * At 2048 px the display is still crisp at retina for any tile size
+ * we render (client tiles cap ~800 px, fullscreen modal ~1200 px)
+ * while texture memory drops by ~8×.
  *
  * WebP at quality 0.95 is visually indistinguishable from the source
  * PNG/JPEG but typically 30–50% smaller. Alpha channels are preserved
  * natively by every modern browser's `canvas.toBlob("image/webp", …)`
- * implementation. If the conversion doesn't produce a smaller file
- * (rare — happens with already-tiny PNGs), we return the original so
+ * implementation. If the conversion produces a larger file than the
+ * original (rare, e.g. small palette PNGs), we keep the original so
  * uploads never grow.
  */
 
@@ -18,22 +24,31 @@
  *  gain. */
 export const DEFAULT_WEBP_QUALITY = 0.95;
 
-/** Return a WebP File with identical pixel dimensions to the input —
- *  never downsized. The returned `File.name` has its extension rewritten
- *  to `.webp`. `lastModified` is carried over so it feels like the
- *  same file to the rest of the app.
+/** Default longest-edge cap applied to uploads. Tuned to match
+ *  `MAX_LABEL_TEXTURE_DIMENSION` in BagMesh / SupplementJarMesh —
+ *  going higher just bloats Supabase storage + bandwidth for no
+ *  display benefit, and the runtime downsampler would shrink it to
+ *  this size anyway on every page view. */
+export const DEFAULT_UPLOAD_MAX_DIMENSION = 2048;
+
+/** Return a WebP File sized so its longest edge is at most
+ *  `maxDimension` pixels. Aspect ratio is preserved; images already
+ *  smaller than the cap pass through at original dimensions. The
+ *  returned `File.name` has its extension rewritten to `.webp` and
+ *  `lastModified` is carried over so it feels like the same file.
  *
  *  Returns the original File untouched when:
- *    - The source is already WebP (nothing to gain).
+ *    - The source is already WebP AND already within the size cap.
  *    - We're not in a DOM environment.
  *    - `createImageBitmap` or `canvas.toBlob` fail (older browser,
  *      CORS-tainted source, etc.).
- *    - The re-encode produced a larger file than the source. */
+ *    - The re-encode produced a larger file than the source AND no
+ *      resize was needed (resizing alone is always a net win). */
 export async function convertImageToWebP(
   file: File,
-  quality: number = DEFAULT_WEBP_QUALITY
+  quality: number = DEFAULT_WEBP_QUALITY,
+  maxDimension: number = DEFAULT_UPLOAD_MAX_DIMENSION
 ): Promise<File> {
-  if (file.type === "image/webp") return file;
   if (typeof document === "undefined") return file;
 
   // ImageBitmap decode preserves full bit-depth and — importantly —
@@ -48,15 +63,39 @@ export async function convertImageToWebP(
     return file;
   }
 
+  const srcW = bitmap.width;
+  const srcH = bitmap.height;
+  const longest = Math.max(srcW, srcH);
+  const needsResize = longest > maxDimension;
+
+  // Short-circuit: if the file is already WebP AND within the size
+  // cap, there's nothing to do — re-encoding would either be a no-op
+  // or produce a slightly larger file thanks to encoder jitter.
+  if (file.type === "image/webp" && !needsResize) {
+    bitmap.close();
+    return file;
+  }
+
+  let targetW = srcW;
+  let targetH = srcH;
+  if (needsResize) {
+    const scale = maxDimension / longest;
+    targetW = Math.max(1, Math.round(srcW * scale));
+    targetH = Math.max(1, Math.round(srcH * scale));
+  }
+
   const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
+  canvas.width = targetW;
+  canvas.height = targetH;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     bitmap.close();
     return file;
   }
-  ctx.drawImage(bitmap, 0, 0);
+  // drawImage scales during the blit — one pass, no intermediate
+  // buffer. Browsers use a decent bilinear filter here; for display
+  // at tile size the result is indistinguishable from offline tools.
+  ctx.drawImage(bitmap, 0, 0, targetW, targetH);
   bitmap.close();
 
   const blob = await new Promise<Blob | null>((resolve) => {
@@ -64,23 +103,30 @@ export async function convertImageToWebP(
   });
   if (!blob) return file;
 
-  // Guard against the edge case where WebP actually makes the file
-  // larger (tiny PNGs with flat colour already compress very well via
-  // indexed palette; WebP doesn't always win on those). We keep the
-  // smaller of the two so uploads never grow.
-  if (blob.size >= file.size) return file;
+  // If we resized, we always return the WebP — even if it somehow
+  // ended up larger than the original (it won't, at these sizes),
+  // the GPU benefit is the point. If we DIDN'T resize, fall back to
+  // the original when WebP doesn't win on size (tiny palette PNGs).
+  if (!needsResize && blob.size >= file.size) return file;
 
-  // Rewrite extension so Supabase Storage + downstream consumers see a
-  // sensible filename. If the original had no extension we just append
-  // `.webp` rather than leaving it bare.
   const base = file.name.replace(/\.(png|jpe?g|bmp|tiff?|webp)$/i, "");
   const newName = `${base}.webp`;
 
-  return new File([blob], newName, {
+  const result = new File([blob], newName, {
     type: "image/webp",
     lastModified: file.lastModified,
   });
+  // Stash source + target dims on the result for the logged wrapper.
+  // We can't add real properties to a File, but we can encode them
+  // in a symbol-keyed WeakMap keyed on the result reference.
+  DIMS.set(result, { srcW, srcH, targetW, targetH });
+  return result;
 }
+
+/** Attached dimensions for the most recent conversion result. The
+ *  logged wrapper reads this to print source → target sizes in the
+ *  console info line. */
+const DIMS = new WeakMap<File, { srcW: number; srcH: number; targetW: number; targetH: number }>();
 
 /** Convenience wrapper that logs the before/after sizes to the console
  *  so the developer can verify savings at a glance. Uses
@@ -90,17 +136,22 @@ export async function convertImageToWebP(
 export async function convertImageToWebPLogged(
   file: File,
   label: string,
-  quality: number = DEFAULT_WEBP_QUALITY
+  quality: number = DEFAULT_WEBP_QUALITY,
+  maxDimension: number = DEFAULT_UPLOAD_MAX_DIMENSION
 ): Promise<File> {
   const before = file.size;
-  const out = await convertImageToWebP(file, quality);
+  const out = await convertImageToWebP(file, quality, maxDimension);
   const after = out.size;
   if (out !== file) {
     const savedKB = ((before - after) / 1024).toFixed(1);
     const pct = ((1 - after / before) * 100).toFixed(0);
+    const dims = DIMS.get(out);
+    const dimPart = dims
+      ? ` ${dims.srcW}×${dims.srcH} → ${dims.targetW}×${dims.targetH}`
+      : "";
     // eslint-disable-next-line no-console
     console.info(
-      `[calyx:webp] ${label}: ${(before / 1024).toFixed(1)}KB → ` +
+      `[calyx:webp] ${label}:${dimPart} ${(before / 1024).toFixed(1)}KB → ` +
         `${(after / 1024).toFixed(1)}KB (saved ${savedKB}KB, ${pct}%)`
     );
   } else if (file.type !== "image/webp") {
