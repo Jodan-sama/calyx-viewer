@@ -28,6 +28,7 @@ import {
 import type { SceneEnvironment } from "@/lib/types";
 import { useIsMobile } from "@/lib/useIsMobile";
 import { useInViewport } from "@/lib/useInViewport";
+import ShaderPrecompile from "./ShaderPrecompile";
 
 interface Props {
   /** The label artwork to map onto the jar's body label (Layer 2). */
@@ -322,6 +323,9 @@ export default function OutreachJarViewer({
       )}
 
       <Suspense fallback={null}>
+        {/* Batch-compile every material's shader — see
+            ShaderPrecompile for the full rationale. */}
+        <ShaderPrecompile />
         {/* HDRI environment — rave/UV both force studio with low
             intensity. See OutreachBagViewer for rationale. */}
         {isRave ? (

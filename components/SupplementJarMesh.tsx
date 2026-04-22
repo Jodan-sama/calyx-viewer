@@ -241,6 +241,11 @@ function buildHolographicTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+// Upper bound on the longest edge of the CanvasTexture we create — see
+// matching constant + rationale in BagMesh.tsx. Both products share the
+// same ceiling so the look is consistent between bag and jar tiles.
+const MAX_LABEL_TEXTURE_DIMENSION = 2048;
+
 // ── Texture loader with alpha-edge cleanup (shared with BagMesh) ───────────
 async function loadLabelTexture(
   url: string,
@@ -251,11 +256,21 @@ async function loadLabelTexture(
     const bitmap = await createImageBitmap(blob, { premultiplyAlpha: "none" });
     if (signal.cancelled) return null;
 
+    let w = bitmap.width;
+    let h = bitmap.height;
+    const longest = Math.max(w, h);
+    if (longest > MAX_LABEL_TEXTURE_DIMENSION) {
+      const scale = MAX_LABEL_TEXTURE_DIMENSION / longest;
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+    }
+
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-    ctx.drawImage(bitmap, 0, 0);
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
 
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data;
