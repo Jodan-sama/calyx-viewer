@@ -122,7 +122,7 @@ export default function ClientSite({
       <header className="relative z-10 flex-shrink-0 flex items-center justify-center px-8 h-[72px] border-b border-[#e8ecf2] bg-white/70 backdrop-blur-sm">
         <a
           href="tel:+17243037481"
-          className="absolute left-1/4 -translate-x-1/2 text-[#101820] text-[8px] sm:text-xs lg:text-sm font-light tracking-[0.04em] sm:tracking-[0.14em] lg:tracking-[0.18em] hover:opacity-60 transition-opacity whitespace-nowrap"
+          className="absolute left-2 sm:left-1/4 translate-x-0 sm:-translate-x-1/2 text-[#101820] text-[7px] sm:text-[10px] md:text-xs lg:text-sm font-light tracking-[0.02em] sm:tracking-[0.08em] md:tracking-[0.14em] lg:tracking-[0.18em] hover:opacity-60 transition-opacity whitespace-nowrap"
         >
           724-303-7481
         </a>
@@ -132,11 +132,11 @@ export default function ClientSite({
           width={160}
           height={42}
           priority
-          className="h-4 sm:h-7 lg:h-[42px] w-auto"
+          style={{ height: 42, width: "auto" }}
         />
         <a
           href="mailto:info@calyxcontainers.com"
-          className="absolute left-3/4 -translate-x-1/2 text-[#101820] text-[8px] sm:text-xs lg:text-sm font-light tracking-[0.04em] sm:tracking-[0.14em] lg:tracking-[0.18em] hover:opacity-60 transition-opacity whitespace-nowrap"
+          className="absolute right-2 sm:right-auto sm:left-3/4 translate-x-0 sm:-translate-x-1/2 text-[#101820] text-[7px] sm:text-[10px] md:text-xs lg:text-sm font-light tracking-[0.02em] sm:tracking-[0.08em] md:tracking-[0.14em] lg:tracking-[0.18em] hover:opacity-60 transition-opacity whitespace-nowrap"
         >
           info@calyxcontainers.com
         </a>
